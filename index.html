@@ -21,89 +21,95 @@
 
 <header class="topbar">
   <h1>📦 Quay Video Xác Nhận Đơn Hàng</h1>
-    <div id="statusPill" class="pill pill-checking">Đang kiểm tra kết nối...</div>
-    </header>
-    
-    <main class="container">
-    
-      <!-- BƯỚC 1: MÃ ĐƠN HÀNG -->
-        <section class="card">
-            <h2>1. Mã đơn hàng</h2>
-                <div class="row">
-                      <input id="orderCode" type="text" placeholder="Nhập hoặc quét mã đơn" autocomplete="off" autocapitalize="characters" />
-                            <button id="btnScan" class="btn btn-secondary" type="button">📷 Quét mã</button>
-                                </div>
-                                  </section>
-                                  
-                                    <!-- BƯỚC 2: THÔNG TIN CUỘC GọI -->
-                                      <section class="card">
-                                          <h2>2. Thông tin cuộc gọi</h2>
-                                          
-                                              <label for="callerName">Người gọi</label>
-                                                  <select id="callerName">
-                                                        <option value="">-- Chọn người gọi --</option>
-                                                            </select>
-                                                            
-                                                                <label for="callDate">Ngày gọi</label>
-                                                                    <input id="callDate" type="date" />
-                                                                    
-                                                                        <label for="reason">Lý do / Kết quả cuộc gọi</label>
-                                                                            <select id="reason">
-                                                                                  <option value="">-- Chọn lý do --</option>
-                                                                                      </select>
-                                                                                          <input id="reasonOther" type="text" placeholder="Nhập lý do khác..." class="hidden" />
-                                                                                          
-                                                                                              <label for="staffNote">Ghi chú thêm (không bắt buộc)</label>
-                                                                                                  <textarea id="staffNote" rows="2" placeholder="Ghi chú..."></textarea>
-                                                                                                    </section>
-                                                                                                    
-                                                                                                      <!-- BƯỚC 3: QUAY VIDEO -->
-                                                                                                        <section class="card">
-                                                                                                            <h2>3. Quay video cuộc gọi</h2>
-                                                                                                            
-                                                                                                                <div class="video-wrap">
-                                                                                                                      <video id="livePreview" playsinline muted autoplay></video>
-                                                                                                                            <video id="playbackPreview" playsinline controls class="hidden"></video>
-                                                                                                                                  <div id="recDot" class="rec-dot hidden">● REC <span id="recTimer">00:00</span></div>
-                                                                                                                                      </div>
-                                                                                                                                      
-                                                                                                                                          <div class="row wrap">
-                                                                                                                                                <button id="btnOpenCamera" class="btn btn-secondary" type="button">🎥 Mở camera</button>
-                                                                                                                                                      <button id="btnStartRec" class="btn btn-primary hidden" type="button">⏺ Bắt đầu quay</button>
-                                                                                                                                                            <button id="btnStopRec" class="btn btn-danger hidden" type="button">⏹ Dừng quay</button>
-                                                                                                                                                                  <button id="btnRetake" class="btn btn-secondary hidden" type="button">↺ Quay lại</button>
-                                                                                                                                                                      </div>
-                                                                                                                                                                          <p id="videoInfo" class="muted"></p>
-                                                                                                                                                                            </section>
-                                                                                                                                                                            
-                                                                                                                                                                              <!-- BƯỚC 4: UPLOAD -->
-                                                                                                                                                                                <section class="card">
-                                                                                                                                                                                    <h2>4. Tải video lên Drive &amp; ghi Sheet</h2>
-                                                                                                                                                                                        <button id="btnUpload" class="btn btn-primary btn-block" type="button" disabled>⬆️ Tải lên Drive</button>
-                                                                                                                                                                                        
-                                                                                                                                                                                            <div id="progressWrap" class="hidden">
-                                                                                                                                                                                                  <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
-                                                                                                                                                                                                        <p id="progressText" class="muted">0%</p>
-                                                                                                                                                                                                            </div>
-                                                                                                                                                                                                            
-                                                                                                                                                                                                                <p id="resultMsg"></p>
-                                                                                                                                                                                                                  </section>
-                                                                                                                                                                                                                  
-                                                                                                                                                                                                                  </main>
-                                                                                                                                                                                                                  
-                                                                                                                                                                                                                  <!-- MODAL QUÉT MÃ -->
-                                                                                                                                                                                                                  <div id="scanModal" class="modal hidden">
-                                                                                                                                                                                                                    <div class="modal-content">
-                                                                                                                                                                                                                        <div class="modal-header">
-                                                                                                                                                                                                                              <span>Quét mã đơn hàng</span>
-                                                                                                                                                                                                                                    <button id="btnCloseScan" class="btn-close" type="button">✕</button>
-                                                                                                                                                                                                                                        </div>
-                                                                                                                                                                                                                                            <div id="reader"></div>
-                                                                                                                                                                                                                                              </div>
-                                                                                                                                                                                                                                              </div>
-                                                                                                                                                                                                                                              
-                                                                                                                                                                                                                                              <script src="config.js"></script>
-                                                                                                                                                                                                                                              <script src="app.js"></script>
-                                                                                                                                                                                                                                              </body>
-                                                                                                                                                                                                                                              </html>
-                                                                                                                                                                                                                                              unction test() { const a = [1,2,3]; return "hi"; }
+  <div id="statusPill" class="pill pill-checking">Đang kiểm tra kết nối...</div>
+</header>
+
+<main class="container">
+
+  <!-- BƯỚC 1: MÃ ĐƠN HÀNG -->
+  <section class="card">
+    <h2>1. Mã đơn hàng</h2>
+    <div class="row">
+      <input id="orderCode" type="text" placeholder="Nhập hoặc quét mã đơn" autocomplete="off" autocapitalize="characters" />
+      <button id="btnScan" class="btn btn-secondary" type="button">📷 Quét mã</button>
+    </div>
+  </section>
+
+  <!-- BƯỚC 2: THÔNG TIN CUỘC GỌI -->
+  <section class="card">
+    <h2>2. Thông tin cuộc gọi</h2>
+
+    <label for="callerName">Người gọi</label>
+    <select id="callerName">
+      <option value="">-- Chọn người gọi --</option>
+    </select>
+
+    <label for="callDate">Ngày gọi</label>
+    <input id="callDate" type="date" />
+
+    <label for="reason">Lý do / Kết quả cuộc gọi</label>
+    <select id="reason">
+      <option value="">-- Chọn lý do --</option>
+    </select>
+    <input id="reasonOther" type="text" placeholder="Nhập lý do khác..." class="hidden" />
+
+    <label for="staffNote">Ghi chú thêm (không bắt buộc)</label>
+    <textarea id="staffNote" rows="2" placeholder="Ghi chú..."></textarea>
+  </section>
+
+  <!-- BƯỚC 3: QUAY VIDEO -->
+  <section class="card">
+    <h2>3. Quay video cuộc gọi</h2>
+
+    <div class="video-wrap" id="videoWrap">
+      <video id="livePreview" playsinline muted autoplay class="src-video"></video>
+      <canvas id="recordCanvas"></canvas>
+      <video id="playbackPreview" playsinline controls class="hidden playback-video"></video>
+      <div id="recDot" class="rec-dot hidden">● REC <span id="recTimer">00:00</span></div>
+      <div id="zoomControl" class="zoom-control hidden">
+        <span class="zoom-icon">🔍</span>
+        <input id="zoomSlider" type="range" min="1" max="3" step="0.1" value="1" />
+        <span id="zoomLabel" class="zoom-label">1.0x</span>
+      </div>
+    </div>
+
+    <div class="row wrap" id="recordControls">
+      <button id="btnOpenCamera" class="btn btn-secondary" type="button">🎥 Mở camera</button>
+      <button id="btnStartRec" class="btn btn-primary hidden" type="button">⏺ Bắt đầu quay</button>
+      <button id="btnStopRec" class="btn btn-danger hidden" type="button">⏹ Dừng quay</button>
+      <button id="btnRetake" class="btn btn-secondary hidden" type="button">↺ Quay lại</button>
+    </div>
+    <p id="geoStatus" class="muted"></p>
+    <p id="videoInfo" class="muted"></p>
+  </section>
+
+  <!-- BƯỚC 4: UPLOAD -->
+  <section class="card">
+    <h2>4. Tải video lên Drive &amp; ghi Sheet</h2>
+    <button id="btnUpload" class="btn btn-primary btn-block" type="button" disabled>⬆️ Tải lên Drive</button>
+
+    <div id="progressWrap" class="hidden">
+      <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
+      <p id="progressText" class="muted">0%</p>
+    </div>
+
+    <p id="resultMsg"></p>
+  </section>
+
+</main>
+
+<!-- MODAL QUÉT MÃ -->
+<div id="scanModal" class="modal hidden">
+  <div class="modal-content">
+    <div class="modal-header">
+      <span>Quét mã đơn hàng</span>
+      <button id="btnCloseScan" class="btn-close" type="button">✕</button>
+    </div>
+    <div id="reader"></div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
