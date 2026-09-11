@@ -582,6 +582,8 @@
       }).catch(function () { return null; });
     }
 
+    var MAX_RETRIES = 8;
+
     function attemptChunk(offset, retriesLeft) {
       var end = Math.min(offset + CHUNK_SIZE, total);
       return putRange(offset, end).then(function (res) {
@@ -599,7 +601,10 @@
         });
       }).catch(function (err) {
         if (retriesLeft <= 0) throw err;
-        return sleep_(1500).then(queryStatus).then(function (resumeOffset) {
+        var attemptNo = MAX_RETRIES - retriesLeft + 1;
+        var delay = Math.min(1500 * attemptNo, 12000); // backoff tăng dần, tối đa 12s
+        if (onProgress) onProgress(null, 'Mạng chập chờn, đang thử lại (' + attemptNo + '/' + MAX_RETRIES + ')...');
+        return sleep_(delay).then(queryStatus).then(function (resumeOffset) {
           var nextOffset = (resumeOffset === null) ? offset : resumeOffset;
           return attemptChunk(nextOffset, retriesLeft - 1);
         });
@@ -608,23 +613,35 @@
 
     function loop(offset) {
       if (offset >= total) return queryStatus().then(function () { return null; });
-      return attemptChunk(offset, 5);
+      return attemptChunk(offset, MAX_RETRIES);
     }
 
     return loop(0);
   }
 
-  function postJson_(url, body) {
+  // Gọi API GAS dạng JSON, tự thử lại vài lần nếu mạng chập chờn (hay gặp trên di động)
+  function postJson_(url, body, retriesLeft) {
+    if (retriesLeft === undefined) retriesLeft = 3;
     return fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // tránh CORS preflight với Apps Script
       body: JSON.stringify(body)
-    }).then(function (res) { return res.json(); });
+    }).then(function (res) { return res.json(); })
+      .catch(function (err) {
+        if (retriesLeft <= 0) throw err;
+        return sleep_(1500).then(function () {
+          return postJson_(url, body, retriesLeft - 1);
+        });
+      });
   }
 
-  function setProgress_(pct) {
-    progressFill.style.width = pct + '%';
-    progressText.textContent = pct + '%';
+  function setProgress_(pct, statusText) {
+    if (pct !== null && pct !== undefined) {
+      progressFill.style.width = pct + '%';
+      progressText.textContent = statusText ? (pct + '% — ' + statusText) : (pct + '%');
+    } else if (statusText) {
+      progressText.textContent = statusText;
+    }
   }
 
   function showResult_(ok, text) {
