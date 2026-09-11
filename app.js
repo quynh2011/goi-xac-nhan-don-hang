@@ -499,7 +499,18 @@
   }
 
   // ============================================================================
-  // Upload: mở phiên resumable qua GAS, PUT chunk thẳng lên Drive, rồi logRow
+  // Upload: gửi video theo từng phần (base64) lên chính GAS (cùng domain,
+  // không bị CORS) — CHÍNH SERVER (Apps Script) mới là bên PUT video lên
+  // Drive, trình duyệt của nhân viên KHÔNG PUT thẳng lên googleapis.com nữa.
+  //
+  // Lý do đổi cách này: trên iPhone/Safari, PUT trực tiếp từ trình duyệt lên
+  // googleapis.com hay bị báo "Load failed" dù mạng khỏe (Safari có nhiều lý
+  // do hủy ngầm loại request cross-origin lớn này: tiết kiệm pin, ITP, chặn
+  // riêng tư, chuyển mạng...). Việc đó KHÔNG tự thử lại được vì bản chất là
+  // trình duyệt từ chối gửi tiếp, không phải mất gói tin. Do đó bản này bỏ
+  // hẳn cách PUT thẳng, chuyển sang: trình duyệt POST dữ liệu (giống hệt
+  // kiểu initUpload/logRow đã chạy ổn định) -> Apps Script nhận rồi tự đẩy
+  // tiếp lên Drive. Mỗi phần vẫn tự động thử lại nếu lỗi mạng.
   // ============================================================================
   function doUpload_() {
     if (!validateForm_()) return;
@@ -518,11 +529,7 @@
     var ext = (recordedMimeType.indexOf('mp4') !== -1) ? 'mp4' : 'webm';
     var fileName = orderCode + '.' + ext;
 
-    postJson_(GAS_URL, { action: 'initUpload', accessCode: ACCESS_CODE, fileName: fileName, mimeType: recordedBlob.type || 'video/mp4' })
-      .then(function (initRes) {
-        if (!initRes.ok) throw new Error(initRes.error || 'Không mở được phiên upload');
-        return uploadInChunks_(initRes.sessionUrl, recordedBlob, setProgress_);
-      })
+    uploadViaGasRelay_(recordedBlob, fileName, recordedBlob.type || 'video/mp4', setProgress_)
       .then(function (driveFile) {
         if (!driveFile || !driveFile.id) {
           throw new Error('Upload dường như đã xong nhưng không nhận được xác nhận từ Drive. Vui lòng kiểm tra thư mục Drive, có thể cần thử lại.');
@@ -547,81 +554,73 @@
         resetFormAfterSuccess_();
       })
       .catch(function (err) {
-        showResult_(false, '❌ Lỗi: ' + err.message);
+        showResult_(false, '❌ Lỗi: ' + (err && err.message ? err.message : err));
         btnUpload.disabled = false;
       });
   }
 
-  function uploadInChunks_(sessionUrl, blob, onProgress) {
+  // Cắt blob thành từng phần theo CHUNK_SIZE (phải là bội số 256KB theo yêu
+  // cầu resumable upload của Google — CHUNK_SIZE mặc định 8MB đã thỏa),
+  // gửi từng phần dạng base64 lên GAS bằng postJson_ (tự thử lại sẵn có).
+  // Chunk đầu tiên kèm fileName/mimeType để server mở phiên upload Drive;
+  // server lưu sessionUrl đó (theo uploadId) để dùng cho các chunk tiếp theo.
+  function uploadViaGasRelay_(blob, fileName, mimeType, onProgress) {
     var total = blob.size;
+    var uploadId = 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    var chunkIndex = 0;
 
-    function putRange(start, end) {
-      var chunk = blob.slice(start, end);
-      return fetch(sessionUrl, {
-        method: 'PUT',
-        headers: { 'Content-Range': 'bytes ' + start + '-' + (end - 1) + '/' + total },
-        body: chunk
-      });
-    }
-
-    function queryStatus() {
-      return fetch(sessionUrl, {
-        method: 'PUT',
-        headers: { 'Content-Range': 'bytes */' + total }
-      }).then(function (res) {
-        if (res.status === 308) {
-          var range = res.headers.get('range');
-          if (range) {
-            var m = /bytes=0-(\d+)/.exec(range);
-            if (m) return parseInt(m[1], 10) + 1;
-          }
-          return 0;
+    function sendFrom(start) {
+      var end = Math.min(start + CHUNK_SIZE, total) - 1; // inclusive
+      var sliceBlob = blob.slice(start, end + 1);
+      return sliceBlob.arrayBuffer().then(function (buf) {
+        var payload = {
+          action: 'uploadChunk',
+          accessCode: ACCESS_CODE,
+          uploadId: uploadId,
+          chunkIndex: chunkIndex,
+          start: start,
+          end: end,
+          totalBytes: total,
+          data: arrayBufferToBase64_(buf)
+        };
+        if (chunkIndex === 0) {
+          payload.fileName = fileName;
+          payload.mimeType = mimeType;
         }
-        if (res.status === 200 || res.status === 201) return total;
-        return null;
-      }).catch(function () { return null; });
-    }
-
-    var MAX_RETRIES = 8;
-
-    function attemptChunk(offset, retriesLeft) {
-      var end = Math.min(offset + CHUNK_SIZE, total);
-      return putRange(offset, end).then(function (res) {
-        if (res.status === 308) {
-          onProgress(Math.round((end / total) * 100));
-          return loop(end);
-        }
-        if (res.status === 200 || res.status === 201) {
-          onProgress(100);
-          return res.json();
-        }
-        // Lỗi HTTP khác -> thử đồng bộ lại vị trí rồi retry
-        return res.text().then(function (txt) {
-          throw new Error('HTTP ' + res.status + ': ' + txt.slice(0, 200));
-        });
-      }).catch(function (err) {
-        if (retriesLeft <= 0) throw err;
-        var attemptNo = MAX_RETRIES - retriesLeft + 1;
-        var delay = Math.min(1500 * attemptNo, 12000); // backoff tăng dần, tối đa 12s
-        if (onProgress) onProgress(null, 'Mạng chập chờn, đang thử lại (' + attemptNo + '/' + MAX_RETRIES + ')...');
-        return sleep_(delay).then(queryStatus).then(function (resumeOffset) {
-          var nextOffset = (resumeOffset === null) ? offset : resumeOffset;
-          return attemptChunk(nextOffset, retriesLeft - 1);
+        // Chunk lớn nên GAS xử lý có thể mất vài giây -> cho thử lại nhiều
+        // lần với thời gian chờ tăng dần, đồng thời không cần trình duyệt
+        // tự lo việc PUT/CORS/resume nữa (server lo hết phần đó rồi).
+        return postJson_(GAS_URL, payload, 6, 2000).then(function (res) {
+          if (!res.ok) throw new Error(res.error || 'Lỗi khi gửi phần dữ liệu video lên máy chủ');
+          var pct = Math.round(((end + 1) / total) * 100);
+          if (onProgress) onProgress(pct);
+          chunkIndex++;
+          if (res.done) return res.file;
+          return sendFrom(end + 1);
         });
       });
     }
 
-    function loop(offset) {
-      if (offset >= total) return queryStatus().then(function () { return null; });
-      return attemptChunk(offset, MAX_RETRIES);
-    }
-
-    return loop(0);
+    return sendFrom(0);
   }
 
-  // Gọi API GAS dạng JSON, tự thử lại vài lần nếu mạng chập chờn (hay gặp trên di động)
-  function postJson_(url, body, retriesLeft) {
-    if (retriesLeft === undefined) retriesLeft = 3;
+  // Chuyển ArrayBuffer -> chuỗi base64, chia nhỏ khi gọi String.fromCharCode
+  // để tránh tràn stack với video vài MB trở lên.
+  function arrayBufferToBase64_(buffer) {
+    var bytes = new Uint8Array(buffer);
+    var binary = '';
+    var STEP = 0x8000; // 32768
+    for (var i = 0; i < bytes.length; i += STEP) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + STEP));
+    }
+    return btoa(binary);
+  }
+
+  // Gọi API GAS dạng JSON, tự thử lại vài lần với thời gian chờ tăng dần
+  // nếu mạng chập chờn (hay gặp trên di động).
+  function postJson_(url, body, retriesLeft, baseDelayMs) {
+    if (retriesLeft === undefined) retriesLeft = 5;
+    if (baseDelayMs === undefined) baseDelayMs = 1500;
     return fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // tránh CORS preflight với Apps Script
@@ -629,8 +628,8 @@
     }).then(function (res) { return res.json(); })
       .catch(function (err) {
         if (retriesLeft <= 0) throw err;
-        return sleep_(1500).then(function () {
-          return postJson_(url, body, retriesLeft - 1);
+        return sleep_(baseDelayMs).then(function () {
+          return postJson_(url, body, retriesLeft - 1, Math.min(baseDelayMs * 1.6, 10000));
         });
       });
   }
