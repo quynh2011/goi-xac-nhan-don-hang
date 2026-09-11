@@ -12,7 +12,7 @@ window.APP_CONFIG = {
 
   // Phải TRÙNG KHỚP với ACCESS_CODE trong gas/Code.gs, để chặn người
   // ngoài lỡ có link web app vẫn không tự upload/ghi dữ liệu được.
-  ACCESS_CODE: 'DOISO-MA-BI-MAT-2026',
+  ACCESS_CODE: '040715',
 
   // Tên hiển thị của app
   APP_NAME: 'Quay Video Xác Nhận Đơn Hàng'
