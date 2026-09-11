@@ -4,7 +4,7 @@
 window.APP_CONFIG = {
   // Dán URL "Web app" lấy được sau khi Deploy Apps Script vào đây.
   // Dạng: https://script.google.com/macros/s/XXXXXXXXXXXXXXXX/exec
-  GAS_WEB_APP_URL: 'DÁN_URL_APPS_SCRIPT_VÀO_ĐÂY',
+  GAS_WEB_APP_URL: 'https://script.google.com/macros/s/AKfycbztbGrnNqsRfU5RrPUHt-dpoILGV9ejVrhDEQSgU2-moOQK_1myT9dgQNREO3kc0qIK/exec',
 
   // Kích thước mỗi chunk khi upload video (byte). 8MB là mức cân bằng tốt
   // giữa tốc độ và độ ổn định trên mạng di động.
