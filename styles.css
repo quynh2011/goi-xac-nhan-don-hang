@@ -228,6 +228,35 @@ body.recording-fullscreen #recordControls {
 #resultMsg.ok { color: #86efac; }
 #resultMsg.error { color: #fecaca; }
 
+.queue-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.queue-item:last-child { margin-bottom: 0; }
+.queue-item .queue-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+}
+.queue-item .queue-status {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.queue-item.status-success .queue-status { color: #86efac; }
+.queue-item.status-error .queue-status { color: #fecaca; }
+.queue-item .progress-bar { margin-top: 8px; height: 6px; }
+.queue-item .btn-retry {
+  margin-top: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
 .modal {
   position: fixed;
   inset: 0;
