@@ -21,15 +21,14 @@
     margin-bottom: 4px;
   }
   .status-box {
-    background: #0b1220;
+    background: var(--bg);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px;
-    font-size: 13px;
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
   }
-  .status-box .k { color: var(--muted); display: block; margin-bottom: 4px; }
+  .status-box .k { color: var(--muted); display: block; margin-bottom: 4px; font-size: 12px; }
   .status-box .v { font-size: 15px; font-weight: 700; }
-  .status-box .v.on { color: #86efac; }
+  .status-box .v.on { color: var(--success); }
   .status-box .v.off { color: var(--muted); }
   .ctrl-grid {
     display: grid;
@@ -86,6 +85,13 @@
 
   <section class="card hidden" id="controlCard">
     <h2>Trạng thái điện thoại — Đơn: <span id="curOrderCode">—</span></h2>
+
+    <div class="live-preview-wrap" id="livePreviewWrap">
+      <img id="livePreviewImg" class="hidden" alt="Xem trực tiếp từ điện thoại" />
+      <div id="livePreviewPlaceholder" class="live-preview-placeholder">📷 Camera đang tắt</div>
+    </div>
+    <p id="remoteErrorMsg" class="remote-error hidden"></p>
+
     <div class="status-grid">
       <div class="status-box"><span class="k">Camera</span><span id="stCamera" class="v off">Đang tắt</span></div>
       <div class="status-box"><span class="k">Đang quay</span><span id="stRecording" class="v off">Không</span></div>
@@ -345,8 +351,36 @@
     $('cbRetake').disabled = !status.hasVideo || !!status.recording;
     updateUploadEnabled_(); // dùng status.hasVideo/recording (lastStatus vừa cập nhật) + dữ liệu form trên máy tính
 
+    renderLivePreview_(status);
+
+    var errEl = $('remoteErrorMsg');
+    if (status.lastError) {
+      errEl.textContent = '⚠️ ' + status.lastError;
+      errEl.classList.remove('hidden');
+    } else {
+      errEl.classList.add('hidden');
+    }
+
     if (status.ts) {
       lastUpdated.textContent = 'Cập nhật lúc ' + new Date(status.ts).toLocaleTimeString('vi-VN');
+    }
+  }
+
+  // Ảnh xem trực tiếp điện thoại đang quay gì, gửi kèm statusSend mỗi ~2s
+  // (xem app.js: captureLivePreviewFrame_) — không phải video mượt thật sự,
+  // nhưng đủ để biết ngay điện thoại đang quay đúng góc/đúng đơn không, mà
+  // không cần đứng cạnh điện thoại hay dùng dịch vụ realtime trả phí nào.
+  function renderLivePreview_(status) {
+    var img = $('livePreviewImg');
+    var placeholder = $('livePreviewPlaceholder');
+    if (status.cameraOpen && status.preview) {
+      img.src = status.preview;
+      img.classList.remove('hidden');
+      placeholder.classList.add('hidden');
+    } else {
+      img.classList.add('hidden');
+      placeholder.classList.remove('hidden');
+      placeholder.textContent = status.cameraOpen ? '📷 Đang chờ hình...' : '📷 Camera đang tắt';
     }
   }
 
