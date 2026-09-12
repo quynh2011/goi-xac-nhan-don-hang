@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-title" content="Xác Nhận ĐH" />
 <meta name="theme-color" content="#0f172a" />
 
-<link rel="stylesheet" href="styles.css?v=20260912a" />
+<link rel="stylesheet" href="styles.css?v=20260912b" />
 
 <!-- Thư viện quét mã QR / barcode -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
@@ -25,6 +25,18 @@
 </header>
 
 <main class="container">
+
+  <!-- ĐIỀU KHIỂN TỪ XA (tuỳ chọn): dùng khi điện thoại được đặt cố định làm
+       camera, nhân viên bấm nút từ máy tính đã ghép nối thay vì chạm điện thoại -->
+  <section class="card">
+    <h2>📡 Điều khiển từ xa (tuỳ chọn)</h2>
+    <p class="muted">Đặt điện thoại này cố định làm camera. Mở trang <b>control.html</b> trên máy tính (Windows hoặc macOS đều được), nhập mã bên dưới để bấm nút từ xa thay vì chạm vào điện thoại.</p>
+    <div class="pair-code-box">
+      <span id="pairCodeDisplay" class="pair-code">------</span>
+      <button id="btnTogglePair" class="btn btn-secondary" type="button">📡 Bật điều khiển từ xa</button>
+    </div>
+    <p id="pairStatus" class="muted">Đang tắt — điện thoại chưa nhận lệnh từ máy tính nào.</p>
+  </section>
 
   <!-- BƯỚC 1: MÃ ĐƠN HÀNG -->
   <section class="card">
@@ -68,13 +80,14 @@
       <div id="recDot" class="rec-dot hidden">● REC <span id="recTimer">00:00</span></div>
       <div id="zoomControl" class="zoom-control hidden">
         <span class="zoom-icon">🔍</span>
-        <input id="zoomSlider" type="range" min="1" max="3" step="0.1" value="1" />
+        <input id="zoomSlider" type="range" min="1" max="10" step="0.1" value="1" />
         <span id="zoomLabel" class="zoom-label">1.0x</span>
       </div>
     </div>
 
     <div class="row wrap" id="recordControls">
       <button id="btnOpenCamera" class="btn btn-secondary" type="button">🎥 Mở camera</button>
+      <button id="btnCloseCamera" class="btn btn-secondary hidden" type="button">🚫 Tắt camera</button>
       <button id="btnStartRec" class="btn btn-primary hidden" type="button">⏺ Bắt đầu quay</button>
       <button id="btnStopRec" class="btn btn-danger hidden" type="button">⏹ Dừng quay</button>
       <button id="btnRetake" class="btn btn-secondary hidden" type="button">↺ Quay lại</button>
@@ -88,6 +101,7 @@
     <h2>4. Tải video lên Drive &amp; ghi Sheet</h2>
     <button id="btnUpload" class="btn btn-primary btn-block" type="button" disabled>⬆️ Thêm vào hàng đợi tải lên</button>
     <p class="muted">Bấm xong là quay tiếp cuộc gọi mới được luôn — video sẽ tự tải lên nền phía dưới, không cần đứng chờ.</p>
+    <button id="btnSkip" class="btn btn-secondary btn-block btn-skip" type="button">⏭ Bỏ qua (đơn này không cần video)</button>
     <p id="resultMsg"></p>
   </section>
 
@@ -110,7 +124,7 @@
   </div>
 </div>
 
-<script src="config.js?v=20260912a"></script>
-<script src="app.js?v=20260912a"></script>
+<script src="config.js?v=20260912b"></script>
+<script src="app.js?v=20260912b"></script>
 </body>
 </html>
