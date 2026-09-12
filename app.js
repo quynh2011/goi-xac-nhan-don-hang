@@ -9,6 +9,18 @@
   var CHUNK_SIZE = CFG.CHUNK_SIZE || 8 * 1024 * 1024;
   var ACCESS_CODE = CFG.ACCESS_CODE || '';
 
+  // ---- Cấu hình chất lượng quay video ----
+  // Video quay ở 1080p/8Mbps trước đây cho file ~100MB+/vài phút, tải lên rất
+  // lâu (nhất là mạng di động, upload thường chậm hơn download nhiều lần).
+  // Với video xác nhận cuộc gọi (nói chuyện + đôi lúc soi mã đơn/sản phẩm),
+  // 720p + bitrate vừa phải vẫn đọc rõ chữ mà dung lượng nhỏ hơn 5-6 lần.
+  // Có thể chỉnh lại trong config.js mà không cần sửa file này.
+  var RECORD_WIDTH = CFG.RECORD_WIDTH || 1280;
+  var RECORD_HEIGHT = CFG.RECORD_HEIGHT || 720;
+  var RECORD_FRAME_RATE = CFG.RECORD_FRAME_RATE || 24;
+  var VIDEO_BITRATE = CFG.VIDEO_BITRATE || 1.5 * 1000 * 1000; // 1.5 Mbps
+  var AUDIO_BITRATE = CFG.AUDIO_BITRATE || 64 * 1000; // 64 kbps, đủ cho giọng nói
+
   // ---- DOM refs ----
   var $ = function (id) { return document.getElementById(id); };
   var orderCodeEl = $('orderCode');
@@ -40,10 +52,9 @@
   var btnCloseScan = $('btnCloseScan');
 
   var scanModal = $('scanModal');
-  var progressWrap = $('progressWrap');
-  var progressFill = $('progressFill');
-  var progressText = $('progressText');
   var resultMsg = $('resultMsg');
+  var queueSection = $('queueSection');
+  var uploadQueueList = $('uploadQueueList');
 
   // ---- State ----
   var mediaStream = null;
@@ -54,6 +65,26 @@
   var recTimerInterval = null;
   var recSeconds = 0;
   var html5QrCode = null;
+
+  // Hàng đợi tải lên chạy nền: mỗi phần tử { id, orderCode, callerName,
+  // callDate, reason, staffNote, blob, fileName, mimeType, status
+  // ('queued'|'uploading'|'success'|'error'), progress, errorMsg }.
+  // Nhờ hàng đợi này mà nhân viên bấm "Thêm vào hàng đợi" xong là quay tiếp
+  // cuộc gọi mới ngay, không cần đứng chờ video tải lên xong (video 20-30MB
+  // vẫn có thể mất khoảng 1-2 phút trên mạng bình thường, không thể xuống
+  // còn vài giây được vì giới hạn tốc độ upload thực tế của mạng).
+  var uploadQueue = [];
+  var queueProcessing = false;
+  var queueIdCounter = 0;
+
+  window.addEventListener('beforeunload', function (e) {
+    var pending = uploadQueue.some(function (j) { return j.status === 'queued' || j.status === 'uploading'; });
+    if (pending) {
+      e.preventDefault();
+      e.returnValue = 'Còn video đang tải lên. Nếu đóng trang bây giờ video đó sẽ mất, phải quay lại.';
+      return e.returnValue;
+    }
+  });
 
   var canvasCtx = recordCanvas.getContext('2d');
   var drawRafId = null;
@@ -226,9 +257,9 @@
     navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: 'environment',
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-        frameRate: { ideal: 30 }
+        width: { ideal: RECORD_WIDTH },
+        height: { ideal: RECORD_HEIGHT },
+        frameRate: { ideal: RECORD_FRAME_RATE }
       },
       audio: {
         echoCancellation: true,
@@ -373,15 +404,15 @@
     recordedChunks = [];
     recordedMimeType = pickMimeType_();
 
-    var canvasStream = recordCanvas.captureStream(30);
+    var canvasStream = recordCanvas.captureStream(RECORD_FRAME_RATE);
     var combinedStream = new MediaStream();
     canvasStream.getVideoTracks().forEach(function (t) { combinedStream.addTrack(t); });
     mediaStream.getAudioTracks().forEach(function (t) { combinedStream.addTrack(t); });
 
     var options = {};
     if (recordedMimeType) options.mimeType = recordedMimeType;
-    options.videoBitsPerSecond = 8 * 1000 * 1000; // ~8 Mbps để hình nét
-    options.audioBitsPerSecond = 128 * 1000;
+    options.videoBitsPerSecond = VIDEO_BITRATE;
+    options.audioBitsPerSecond = AUDIO_BITRATE;
 
     try {
       mediaRecorder = new MediaRecorder(combinedStream, options);
@@ -511,6 +542,12 @@
   // hẳn cách PUT thẳng, chuyển sang: trình duyệt POST dữ liệu (giống hệt
   // kiểu initUpload/logRow đã chạy ổn định) -> Apps Script nhận rồi tự đẩy
   // tiếp lên Drive. Mỗi phần vẫn tự động thử lại nếu lỗi mạng.
+  //
+  // Upload chạy dưới dạng HÀNG ĐỢI NỀN: bấm nút xong là ghi nhận video vào
+  // hàng đợi rồi trả form về trạng thái sẵn sàng cho cuộc gọi tiếp theo ngay
+  // lập tức — không bắt nhân viên đứng nhìn thanh tiến trình. Hàng đợi xử lý
+  // từng video một ở nền, tự thử lại khi lỗi mạng, và có nút "Thử lại" nếu
+  // một video thất bại hẳn (ví dụ hết hạn phiên upload).
   // ============================================================================
   function doUpload_() {
     if (!validateForm_()) return;
@@ -519,44 +556,138 @@
       return;
     }
 
-    btnUpload.disabled = true;
-    resultMsg.textContent = '';
-    resultMsg.className = '';
-    progressWrap.classList.remove('hidden');
-    setProgress_(0);
-
     var orderCode = orderCodeEl.value.trim().toUpperCase();
     var ext = (recordedMimeType.indexOf('mp4') !== -1) ? 'mp4' : 'webm';
     var fileName = orderCode + '.' + ext;
 
-    uploadViaGasRelay_(recordedBlob, fileName, recordedBlob.type || 'video/mp4', setProgress_)
+    queueIdCounter++;
+    var job = {
+      id: 'q' + queueIdCounter,
+      orderCode: orderCode,
+      callerName: callerNameEl.value,
+      callDate: callDateEl.value,
+      reason: getReasonValue_(),
+      staffNote: staffNoteEl.value.trim(),
+      blob: recordedBlob,
+      fileName: fileName,
+      mimeType: recordedBlob.type || 'video/mp4',
+      status: 'queued',
+      progress: 0,
+      errorMsg: ''
+    };
+    uploadQueue.push(job);
+    renderQueue_();
+    processQueue_();
+
+    // Trả form về trạng thái sẵn sàng cho cuộc gọi kế tiếp NGAY, không chờ
+    // upload xong — đây chính là điểm giúp nhân viên gọi liên tục được.
+    resetFormForNextCall_();
+    showResult_(true, '✅ Đã thêm video vào hàng đợi tải lên. Có thể quay tiếp cuộc gọi mới ngay.');
+  }
+
+  // Xử lý hàng đợi tuần tự (từng video một) để tránh dồn quá nhiều phiên
+  // upload cùng lúc lên Apps Script/Drive; vì mỗi video giờ chỉ còn vài chục
+  // giây tới ~1-2 phút (sau khi giảm bitrate) nên xử lý tuần tự vẫn theo kịp
+  // nhịp gọi điện bình thường.
+  function processQueue_() {
+    if (queueProcessing) return;
+    var job = uploadQueue.filter(function (j) { return j.status === 'queued'; })[0];
+    if (!job) return;
+
+    queueProcessing = true;
+    job.status = 'uploading';
+    job.progress = 0;
+    renderQueue_();
+
+    uploadViaGasRelay_(job.blob, job.fileName, job.mimeType, function (pct) {
+      job.progress = pct;
+      renderQueue_();
+    })
       .then(function (driveFile) {
         if (!driveFile || !driveFile.id) {
-          throw new Error('Upload dường như đã xong nhưng không nhận được xác nhận từ Drive. Vui lòng kiểm tra thư mục Drive, có thể cần thử lại.');
+          throw new Error('Upload dường như đã xong nhưng không nhận được xác nhận từ Drive.');
         }
-        setProgress_(100);
         return postJson_(GAS_URL, {
           action: 'logRow',
           accessCode: ACCESS_CODE,
-          orderCode: orderCode,
-          callerName: callerNameEl.value,
-          callDate: callDateEl.value,
-          reason: getReasonValue_(),
-          staffNote: staffNoteEl.value.trim(),
-          fileName: fileName,
+          orderCode: job.orderCode,
+          callerName: job.callerName,
+          callDate: job.callDate,
+          reason: job.reason,
+          staffNote: job.staffNote,
+          fileName: job.fileName,
           fileId: driveFile.id || '',
           fileUrl: driveFile.webViewLink || ('https://drive.google.com/file/d/' + driveFile.id + '/view')
         });
       })
       .then(function (logRes) {
         if (!logRes.ok) throw new Error(logRes.error || 'Ghi Sheet thất bại (video đã upload lên Drive)');
-        showResult_(true, '✅ Đã tải video lên Drive và ghi vào Sheet thành công!');
-        resetFormAfterSuccess_();
+        job.status = 'success';
+        job.progress = 100;
+        job.blob = null; // xong việc rồi, giải phóng bộ nhớ (không còn cần để retry)
       })
       .catch(function (err) {
-        showResult_(false, '❌ Lỗi: ' + (err && err.message ? err.message : err));
-        btnUpload.disabled = false;
+        job.status = 'error';
+        job.errorMsg = (err && err.message) ? err.message : String(err);
+        // CỐ Ý giữ nguyên job.blob khi lỗi để nút "Thử lại" còn video mà gửi lại,
+        // không phải bắt nhân viên quay lại từ đầu chỉ vì mạng chập chờn 1 lần.
+      })
+      .then(function () {
+        queueProcessing = false;
+        renderQueue_();
+        processQueue_(); // xử lý video kế tiếp trong hàng đợi (nếu có)
       });
+  }
+
+  function retryJob_(jobId) {
+    var job = uploadQueue.filter(function (j) { return j.id === jobId; })[0];
+    if (!job || !job.blob) return; // blob đã bị giải phóng (chỉ có thể retry khi còn blob trong bộ nhớ, tức là trong cùng phiên trình duyệt)
+    job.status = 'queued';
+    job.errorMsg = '';
+    renderQueue_();
+    processQueue_();
+  }
+
+  function renderQueue_() {
+    if (uploadQueue.length === 0) {
+      queueSection.classList.add('hidden');
+      uploadQueueList.innerHTML = '';
+      return;
+    }
+    queueSection.classList.remove('hidden');
+    uploadQueueList.innerHTML = uploadQueue.map(function (job) {
+      var statusLabel = {
+        queued: '⏳ Đang chờ trong hàng đợi...',
+        uploading: '⬆️ Đang tải lên... ' + job.progress + '%',
+        success: '✅ Đã tải lên Drive và ghi Sheet thành công',
+        error: '❌ Lỗi: ' + escapeHtml_(job.errorMsg)
+      }[job.status] || '';
+
+      var progressBar = (job.status === 'uploading')
+        ? '<div class="progress-bar"><div class="progress-fill" style="width:' + job.progress + '%"></div></div>'
+        : '';
+
+      var retryBtn = (job.status === 'error' && job.blob)
+        ? '<button type="button" class="btn btn-secondary btn-retry" data-retry-id="' + job.id + '">↺ Thử lại</button>'
+        : (job.status === 'error' ? '<p class="muted">Video này đã hết trong bộ nhớ trình duyệt (do tải lại trang) — cần quay lại từ đầu.</p>' : '');
+
+      return '<div class="queue-item status-' + job.status + '">' +
+        '<div class="queue-top"><span>' + escapeHtml_(job.orderCode) + '</span></div>' +
+        '<div class="queue-status">' + statusLabel + '</div>' +
+        progressBar + retryBtn +
+        '</div>';
+    }).join('');
+  }
+
+  uploadQueueList.addEventListener('click', function (e) {
+    var btn = e.target.closest && e.target.closest('[data-retry-id]');
+    if (btn) retryJob_(btn.getAttribute('data-retry-id'));
+  });
+
+  function escapeHtml_(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
   }
 
   // Cắt blob thành từng phần theo CHUNK_SIZE (phải là bội số 256KB theo yêu
@@ -634,21 +765,16 @@
       });
   }
 
-  function setProgress_(pct, statusText) {
-    if (pct !== null && pct !== undefined) {
-      progressFill.style.width = pct + '%';
-      progressText.textContent = statusText ? (pct + '% — ' + statusText) : (pct + '%');
-    } else if (statusText) {
-      progressText.textContent = statusText;
-    }
-  }
-
   function showResult_(ok, text) {
     resultMsg.textContent = text;
     resultMsg.className = ok ? 'ok' : 'error';
   }
 
-  function resetFormAfterSuccess_() {
+  // Đưa form về trạng thái sẵn sàng cho cuộc gọi kế tiếp. Gọi ngay khi video
+  // được thêm vào hàng đợi tải lên (không đợi upload xong) để nhân viên quay
+  // liên tục được. Giữ nguyên "Người gọi" và "Ngày gọi" vì thường gọi nhiều
+  // đơn liên tiếp trong ngày.
+  function resetFormForNextCall_() {
     orderCodeEl.value = '';
     reasonEl.value = '';
     reasonOtherEl.classList.add('hidden');
@@ -661,13 +787,10 @@
     videoInfo.textContent = '';
     btnRetake.classList.add('hidden');
     btnOpenCamera.classList.remove('hidden');
-    progressWrap.classList.add('hidden');
-    setProgress_(0);
     btnUpload.disabled = true;
     if (recordCanvas.width && recordCanvas.height) {
       canvasCtx.clearRect(0, 0, recordCanvas.width, recordCanvas.height);
     }
-    // Giữ nguyên "Người gọi" và "Ngày gọi" vì thường gọi nhiều đơn liên tiếp trong ngày
   }
 
   function sleep_(ms) {
