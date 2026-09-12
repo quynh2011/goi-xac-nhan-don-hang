@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-title" content="Xác Nhận ĐH" />
 <meta name="theme-color" content="#0f172a" />
 
-<link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="styles.css?v=20260912a" />
 
 <!-- Thư viện quét mã QR / barcode -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
@@ -86,14 +86,15 @@
   <!-- BƯỚC 4: UPLOAD -->
   <section class="card">
     <h2>4. Tải video lên Drive &amp; ghi Sheet</h2>
-    <button id="btnUpload" class="btn btn-primary btn-block" type="button" disabled>⬆️ Tải lên Drive</button>
-
-    <div id="progressWrap" class="hidden">
-      <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
-      <p id="progressText" class="muted">0%</p>
-    </div>
-
+    <button id="btnUpload" class="btn btn-primary btn-block" type="button" disabled>⬆️ Thêm vào hàng đợi tải lên</button>
+    <p class="muted">Bấm xong là quay tiếp cuộc gọi mới được luôn — video sẽ tự tải lên nền phía dưới, không cần đứng chờ.</p>
     <p id="resultMsg"></p>
+  </section>
+
+  <!-- HÀNG ĐỢI TẢI LÊN (chạy nền) -->
+  <section class="card hidden" id="queueSection">
+    <h2>Hàng đợi tải lên</h2>
+    <div id="uploadQueueList"></div>
   </section>
 
 </main>
@@ -109,7 +110,7 @@
   </div>
 </div>
 
-<script src="config.js"></script>
-<script src="app.js"></script>
+<script src="config.js?v=20260912a"></script>
+<script src="app.js?v=20260912a"></script>
 </body>
 </html>
