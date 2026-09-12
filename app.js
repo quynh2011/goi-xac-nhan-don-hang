@@ -111,6 +111,10 @@
   var remoteControlEnabled = false;
   var controlPollTimer = null;
   var statusPushTimer = null;
+  var pc_ = null;
+  var webrtcSid_ = '';
+  var webrtcAnswerPollTimer_ = null;
+  var webrtcRetryTimer_ = null;
 
   // ============================================================================
   // Khởi tạo
@@ -295,6 +299,7 @@
       mediaStream = stream;
       showLiveCameraUI_();
       pushRemoteStatus_();
+      maybeStartWebrtcOffer_();
     }).catch(function (err) {
       alert('Không mở được camera/micro: ' + err.message + '\nHãy cấp quyền Camera & Micro cho trình duyệt trong Cài đặt máy.');
     });
@@ -329,6 +334,7 @@
   // sự dừng mediaStream trong luồng quay bình thường; bấm "Mở camera" lại
   // sau đó sẽ xin quyền Camera/Micro lại từ đầu.
   function closeCamera_() {
+    teardownWebrtc_();
     if (mediaStream) {
       mediaStream.getTracks().forEach(function (t) { t.stop(); });
       mediaStream = null;
@@ -964,6 +970,7 @@
       pushRemoteStatus_();
       controlPollTimer = setInterval(pollRemoteCommand_, 1500);
       statusPushTimer = setInterval(pushRemoteStatus_, 2000);
+      if (mediaStream) maybeStartWebrtcOffer_(); // trường hợp camera đã mở sẵn trước khi bật điều khiển từ xa
     } else {
       btnTogglePair.textContent = '📡 Bật điều khiển từ xa';
       pairStatus.textContent = 'Đang tắt — điện thoại chưa nhận lệnh từ máy tính nào.';
@@ -971,6 +978,7 @@
       clearInterval(statusPushTimer);
       controlPollTimer = null;
       statusPushTimer = null;
+      teardownWebrtc_();
     }
   }
 
@@ -1076,6 +1084,99 @@
     };
     postJson_(GAS_URL, { action: 'statusSend', accessCode: ACCESS_CODE, pairCode: pairCode, status: status }, 0, 0)
       .catch(function () { /* gửi trạng thái lỗi tạm thời không sao, lượt sau gửi lại */ });
+  }
+
+  // ---- Video trực tiếp THẬT (WebRTC) khi điều khiển từ xa đang bật ----
+  // Trước đây máy tính chỉ xem được 1 ảnh chụp nhỏ gửi kèm statusSend mỗi
+  // ~2s (xem captureLivePreviewFrame_ bên dưới) -> nhìn giật, không mượt.
+  // Giờ điện thoại chủ động tạo "offer" WebRTC gửi qua GAS (backend chỉ làm
+  // "hộp thư" trao đổi thông tin kết nối MỘT LẦN lúc đầu, bản thân video
+  // KHÔNG đi qua GAS nữa) rồi phát video/âm thanh TRỰC TIẾP sang máy tính
+  // qua cùng mạng wifi -> mượt gần như gọi video thật, không tốn thêm dịch
+  // vụ trả phí nào. Nếu mạng/tường lửa không cho kết nối trực tiếp được (vd
+  // 2 máy khác mạng), ảnh chụp rời rạc ở dưới vẫn còn làm phương án dự phòng.
+  function maybeStartWebrtcOffer_() {
+    if (!remoteControlEnabled || !mediaStream || !GAS_URL || GAS_URL.indexOf('DÁN_URL') !== -1) return;
+    teardownWebrtc_();
+    try {
+      pc_ = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    } catch (e) {
+      return; // trình duyệt không hỗ trợ WebRTC -> im lặng bỏ qua, vẫn còn ảnh chụp dự phòng
+    }
+    mediaStream.getTracks().forEach(function (t) { pc_.addTrack(t, mediaStream); });
+    // Mạng chập chờn/máy tính tắt trang giữa chừng -> kết nối rớt. Tự thử lại
+    // sau vài giây (tạo offer MỚI, mã "sid" khác) thay vì im lặng bỏ cuộc.
+    pc_.oniceconnectionstatechange = function () {
+      if (!pc_) return;
+      var st = pc_.iceConnectionState;
+      if (st === 'failed' || st === 'disconnected' || st === 'closed') {
+        clearTimeout(webrtcRetryTimer_);
+        webrtcRetryTimer_ = setTimeout(function () { maybeStartWebrtcOffer_(); }, 3000);
+      }
+    };
+    var sid = String(Date.now()) + '_' + Math.floor(Math.random() * 1e6);
+    webrtcSid_ = sid;
+    pc_.createOffer().then(function (offer) {
+      return pc_.setLocalDescription(offer);
+    }).then(function () {
+      return waitIceGatheringComplete_(pc_, 2500);
+    }).then(function () {
+      if (!pc_ || webrtcSid_ !== sid) return; // đã bị thay bằng phiên khác trong lúc chờ gom địa chỉ mạng
+      return postJson_(GAS_URL, {
+        action: 'webrtcSend', accessCode: ACCESS_CODE, pairCode: pairCode,
+        role: 'offer', sid: sid, sdp: pc_.localDescription.sdp
+      }, 0, 0);
+    }).then(function () {
+      clearInterval(webrtcAnswerPollTimer_);
+      webrtcAnswerPollTimer_ = setInterval(pollWebrtcAnswer_, 1500);
+    }).catch(function () { /* thử lại ở lượt mở camera/bật điều khiển từ xa kế tiếp */ });
+  }
+
+  function pollWebrtcAnswer_() {
+    if (!pc_ || !webrtcSid_ || !remoteControlEnabled) { clearInterval(webrtcAnswerPollTimer_); return; }
+    postJson_(GAS_URL, { action: 'webrtcPoll', accessCode: ACCESS_CODE, pairCode: pairCode, role: 'answer' }, 0, 0)
+      .then(function (res) {
+        if (!pc_ || !res || !res.ok || !res.signal) return;
+        if (res.signal.sid !== webrtcSid_) return; // answer của phiên offer cũ, bỏ qua
+        if (pc_.signalingState !== 'have-local-offer') return; // đã áp answer rồi hoặc pc đã đổi trạng thái
+        clearInterval(webrtcAnswerPollTimer_);
+        pc_.setRemoteDescription({ type: 'answer', sdp: res.signal.sdp }).catch(function () {});
+      })
+      .catch(function () { /* thử lại lượt sau */ });
+  }
+
+  function teardownWebrtc_() {
+    clearInterval(webrtcAnswerPollTimer_);
+    webrtcAnswerPollTimer_ = null;
+    clearTimeout(webrtcRetryTimer_);
+    webrtcRetryTimer_ = null;
+    if (pc_) {
+      try { pc_.close(); } catch (e) {}
+      pc_ = null;
+    }
+    webrtcSid_ = '';
+  }
+
+  // Chờ gom xong địa chỉ mạng (ICE candidates) rồi mới gửi 1 lần (offer/
+  // answer đã có sẵn địa chỉ bên trong - "vanilla ICE"), thay vì gửi rải rác
+  // nhiều lần (trickle ICE) — đơn giản hơn nhiều khi trao đổi qua kiểu poll
+  // ~1.5s như app này, chỉ tốn thêm tối đa vài giây lúc bắt đầu kết nối.
+  function waitIceGatheringComplete_(pc, timeoutMs) {
+    if (pc.iceGatheringState === 'complete') return Promise.resolve();
+    return new Promise(function (resolve) {
+      var done = false;
+      function finish() {
+        if (done) return;
+        done = true;
+        pc.removeEventListener('icegatheringstatechange', check);
+        resolve();
+      }
+      function check() {
+        if (pc.iceGatheringState === 'complete') finish();
+      }
+      pc.addEventListener('icegatheringstatechange', check);
+      setTimeout(finish, timeoutMs);
+    });
   }
 
   // ---- Ảnh xem trực tiếp gửi kèm trạng thái (mục 2: xem điện thoại đang
