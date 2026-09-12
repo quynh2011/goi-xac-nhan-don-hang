@@ -72,6 +72,11 @@
   var recTimerInterval = null;
   var recSeconds = 0;
   var html5QrCode = null;
+  var lastValidationMissing_ = [];
+  var lastRemoteError_ = '';
+  var lastRemoteCmdSig_ = '';
+  var lastRemoteCmdTime_ = 0;
+  var pollInFlight_ = false;
 
   // Hàng đợi tải lên chạy nền: mỗi phần tử { id, orderCode, callerName,
   // callDate, reason, staffNote, blob, fileName, mimeType, status
@@ -457,6 +462,7 @@
 
   function startRecording_() {
     if (!mediaStream) return;
+    if (mediaRecorder && mediaRecorder.state === 'recording') return; // đã đang quay rồi, bỏ qua lệnh trùng (tránh 2 phiên quay đè lên nhau làm hỏng video)
     recordedChunks = [];
     recordedMimeType = pickMimeType_();
 
@@ -613,11 +619,13 @@
   // Validate form
   // ============================================================================
   function validateForm_() {
-    var ok = orderCodeEl.value.trim() !== '' &&
-      callerNameEl.value !== '' &&
-      callDateEl.value !== '' &&
-      getReasonValue_() !== '' &&
-      recordedBlob !== null;
+    lastValidationMissing_ = [];
+    if (orderCodeEl.value.trim() === '') lastValidationMissing_.push('Mã đơn hàng');
+    if (callerNameEl.value === '') lastValidationMissing_.push('Người gọi');
+    if (callDateEl.value === '') lastValidationMissing_.push('Ngày gọi');
+    if (getReasonValue_() === '') lastValidationMissing_.push('Lý do');
+    if (recordedBlob === null) lastValidationMissing_.push('Video (chưa quay)');
+    var ok = lastValidationMissing_.length === 0;
     btnUpload.disabled = !ok;
     return ok;
   }
@@ -648,7 +656,13 @@
   // một video thất bại hẳn (ví dụ hết hạn phiên upload).
   // ============================================================================
   function doUpload_() {
-    if (!validateForm_()) return;
+    lastRemoteError_ = '';
+    if (!validateForm_()) {
+      lastRemoteError_ = 'Không tải lên được — thiếu: ' + lastValidationMissing_.join(', ');
+      showResult_(false, '⚠️ ' + lastRemoteError_);
+      pushRemoteStatus_();
+      return;
+    }
     if (!GAS_URL || GAS_URL.indexOf('DÁN_URL') !== -1) {
       showResult_(false, 'Chưa cấu hình GAS_WEB_APP_URL trong config.js');
       return;
@@ -962,6 +976,8 @@
 
   function pollRemoteCommand_() {
     if (!remoteControlEnabled || !GAS_URL || GAS_URL.indexOf('DÁN_URL') !== -1) return;
+    if (pollInFlight_) return; // tránh 2 lượt poll chồng lên nhau khi mạng chậm -> có thể nhận lệnh trùng
+    pollInFlight_ = true;
     // Không cho postJson_ tự thử lại ở đây (retriesLeft=0): poll thất bại 1
     // lần thì bỏ qua, lượt poll kế tiếp (1.5s sau) sẽ tự thử lại, tránh dồn
     // request/chờ khi mạng chập chờn.
@@ -969,7 +985,8 @@
       .then(function (res) {
         if (res && res.ok && res.command) handleRemoteCommand_(res.command, res.data);
       })
-      .catch(function () { /* bỏ qua, thử lại ở lượt poll sau */ });
+      .catch(function () { /* bỏ qua, thử lại ở lượt poll sau */ })
+      .then(function () { pollInFlight_ = false; });
   }
 
   // cmd: tên lệnh. data (tuỳ chọn — chỉ đi kèm lệnh 'skip'/'upload'): thông
@@ -979,6 +996,15 @@
   // hành động skip_/doUpload_ sẵn có, để không phải viết lại logic ghi
   // Sheet/upload riêng cho luồng điều khiển từ xa.
   function handleRemoteCommand_(cmd, data) {
+    // Chặn lệnh bị gửi trùng (do lỗi mạng/race lúc lấy-rồi-xoá lệnh phía máy
+    // chủ) tới cùng 1 điện thoại 2 lần liên tiếp trong thời gian ngắn — tránh
+    // ví dụ chạy "startRecording" 2 lần đè lên nhau làm hỏng video.
+    var sig = cmd + '|' + (data ? JSON.stringify(data) : '');
+    var now = Date.now();
+    if (sig === lastRemoteCmdSig_ && (now - lastRemoteCmdTime_) < 4000) return;
+    lastRemoteCmdSig_ = sig;
+    lastRemoteCmdTime_ = now;
+
     if (data) applyRemoteOrderData_(data);
     switch (cmd) {
       case 'openCamera': openCamera_(); break;
@@ -994,7 +1020,7 @@
 
   function applyRemoteOrderData_(data) {
     if (typeof data.orderCode === 'string') orderCodeEl.value = data.orderCode.toUpperCase();
-    if (typeof data.callerName === 'string') callerNameEl.value = data.callerName;
+    if (typeof data.callerName === 'string') setSelectValueSafe_(callerNameEl, data.callerName);
     if (typeof data.callDate === 'string') callDateEl.value = data.callDate;
     if (typeof data.reason === 'string') {
       var hasOption = Array.prototype.some.call(reasonEl.options, function (o) { return o.value === data.reason; });
@@ -1012,6 +1038,29 @@
     validateForm_();
   }
 
+  // Gán giá trị cho <select> một cách AN TOÀN: nếu value không khớp với bất
+  // kỳ <option> nào có sẵn (lệch dữ liệu giữa danh sách trên máy tính và điện
+  // thoại, hoặc điện thoại chưa tải xong danh sách khi lệnh vừa tới), select
+  // gốc sẽ ÂM THẦM thành rỗng (selectedIndex = -1) mà KHÔNG báo lỗi gì — đây
+  // chính là nguyên nhân khiến "Người gọi" bị trống, validateForm_() luôn
+  // fail, nên bấm Tải lên từ máy tính không có tác dụng dù đã nhập đủ. Cách
+  // xử lý: nếu chưa có option khớp, tự tạo thêm 1 option với đúng giá trị đó
+  // rồi mới gán, đảm bảo select KHÔNG BAO GIỜ bị rỗng ngoài ý muốn.
+  function setSelectValueSafe_(selectEl, value) {
+    if (value === '') {
+      selectEl.value = '';
+      return;
+    }
+    var hasOption = Array.prototype.some.call(selectEl.options, function (o) { return o.value === value; });
+    if (!hasOption) {
+      var opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = value;
+      selectEl.appendChild(opt);
+    }
+    selectEl.value = value;
+  }
+
   function pushRemoteStatus_() {
     if (!remoteControlEnabled || !GAS_URL || GAS_URL.indexOf('DÁN_URL') !== -1) return;
     var status = {
@@ -1021,10 +1070,44 @@
       hasVideo: !!recordedBlob,
       canUpload: !btnUpload.disabled,
       queueCount: uploadQueue.filter(function (j) { return j.status === 'queued' || j.status === 'uploading'; }).length,
+      lastError: lastRemoteError_ || '',
+      preview: mediaStream ? captureLivePreviewFrame_() : '',
       ts: Date.now()
     };
     postJson_(GAS_URL, { action: 'statusSend', accessCode: ACCESS_CODE, pairCode: pairCode, status: status }, 0, 0)
       .catch(function () { /* gửi trạng thái lỗi tạm thời không sao, lượt sau gửi lại */ });
+  }
+
+  // ---- Ảnh xem trực tiếp gửi kèm trạng thái (mục 2: xem điện thoại đang
+  // quay gì ngay trên máy tính) ----
+  // Lấy 1 khung hình từ canvas đang quay (đã có sẵn ngày giờ/vị trí khắc lên
+  // sẵn), thu nhỏ + nén JPEG chất lượng thấp để dung lượng nhỏ (CacheService
+  // giới hạn ~100KB/giá trị lưu) rồi gửi kèm statusSend mỗi ~2 giây — đủ để
+  // máy tính "gần như thấy trực tiếp" mà không cần thêm dịch vụ realtime trả
+  // phí nào khác, đúng triết lý thiết kế sẵn có của app này.
+  var previewCanvas_ = document.createElement('canvas');
+  var previewCtx_ = previewCanvas_.getContext('2d');
+  var PREVIEW_MAX_W_ = 320;
+
+  function captureLivePreviewFrame_() {
+    if (!recordCanvas.width || !recordCanvas.height) return '';
+    try {
+      var scale = PREVIEW_MAX_W_ / recordCanvas.width;
+      var pw = PREVIEW_MAX_W_;
+      var ph = Math.max(1, Math.round(recordCanvas.height * scale));
+      if (previewCanvas_.width !== pw || previewCanvas_.height !== ph) {
+        previewCanvas_.width = pw;
+        previewCanvas_.height = ph;
+      }
+      previewCtx_.drawImage(recordCanvas, 0, 0, pw, ph);
+      var dataUrl = previewCanvas_.toDataURL('image/jpeg', 0.5);
+      // An toàn: nếu ảnh vẫn nặng bất thường (khung hình phức tạp) thì bỏ
+      // qua khung này thay vì gửi 1 request quá lớn có thể bị máy chủ từ chối.
+      if (dataUrl.length > 70000) return '';
+      return dataUrl;
+    } catch (e) {
+      return '';
+    }
   }
 
 })();
