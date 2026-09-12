@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Điều Khiển Từ Xa - Quay Video Xác Nhận Đơn Hàng</title>
+<link rel="stylesheet" href="styles.css?v=20260912b" />
+<style>
+  .connect-row { display: flex; gap: 8px; }
+  .connect-row input {
+    flex: 1;
+    font-size: 22px;
+    letter-spacing: 4px;
+    text-align: center;
+    font-weight: 700;
+  }
+  .status-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+  .status-box {
+    background: #0b1220;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    font-size: 13px;
+  }
+  .status-box .k { color: var(--muted); display: block; margin-bottom: 4px; }
+  .status-box .v { font-size: 15px; font-weight: 700; }
+  .status-box .v.on { color: #86efac; }
+  .status-box .v.off { color: var(--muted); }
+  .ctrl-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .ctrl-grid .btn { padding: 16px 10px; font-size: 15px; }
+  .ctrl-grid .full { grid-column: 1 / -1; }
+  .last-updated { font-size: 12px; color: var(--muted); margin-top: 10px; text-align: right; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <h1>📡 Điều Khiển Từ Xa</h1>
+  <div id="connPill" class="pill pill-checking">Chưa kết nối</div>
+</header>
+
+<main class="container">
+
+  <section class="card" id="connectCard">
+    <h2>Kết nối tới điện thoại</h2>
+    <p class="muted">Mở app quay video trên điện thoại đặt cố định làm camera, bấm "Bật điều khiển từ xa", rồi nhập mã 6 số hiển thị trên đó vào đây.</p>
+    <div class="connect-row">
+      <input id="pairCodeInput" type="text" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="off" />
+      <button id="btnConnect" class="btn btn-primary" type="button">Kết nối</button>
+    </div>
+    <p id="connectMsg" class="muted"></p>
+  </section>
+
+  <section class="card hidden" id="controlCard">
+    <h2>Trạng thái điện thoại — Đơn: <span id="curOrderCode">—</span></h2>
+    <div class="status-grid">
+      <div class="status-box"><span class="k">Camera</span><span id="stCamera" class="v off">Đang tắt</span></div>
+      <div class="status-box"><span class="k">Đang quay</span><span id="stRecording" class="v off">Không</span></div>
+      <div class="status-box"><span class="k">Có video</span><span id="stVideo" class="v off">Chưa</span></div>
+      <div class="status-box"><span class="k">Hàng đợi tải lên</span><span id="stQueue" class="v off">0</span></div>
+    </div>
+
+    <div class="ctrl-grid">
+      <button id="cbOpenCamera" class="btn btn-secondary" type="button">🎥 Mở camera</button>
+      <button id="cbCloseCamera" class="btn btn-secondary" type="button">🚫 Tắt camera</button>
+      <button id="cbStartRec" class="btn btn-primary" type="button">⏺ Bắt đầu quay</button>
+      <button id="cbStopRec" class="btn btn-danger" type="button">⏹ Dừng quay</button>
+      <button id="cbRetake" class="btn btn-secondary" type="button">↺ Quay lại</button>
+      <button id="cbSkip" class="btn btn-secondary" type="button">⏭ Bỏ qua</button>
+      <button id="cbUpload" class="btn btn-primary full" type="button">⬆️ Tải lên hàng đợi</button>
+    </div>
+    <p class="last-updated" id="lastUpdated"></p>
+  </section>
+
+</main>
+
+<script src="config.js?v=20260912b"></script>
+<script>
+(function () {
+  'use strict';
+
+  var CFG = window.APP_CONFIG || {};
+  var GAS_URL = CFG.GAS_WEB_APP_URL;
+  var ACCESS_CODE = CFG.ACCESS_CODE || '';
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  var connPill = $('connPill');
+  var connectCard = $('connectCard');
+  var controlCard = $('controlCard');
+  var pairCodeInput = $('pairCodeInput');
+  var btnConnect = $('btnConnect');
+  var connectMsg = $('connectMsg');
+
+  var curOrderCode = $('curOrderCode');
+  var stCamera = $('stCamera');
+  var stRecording = $('stRecording');
+  var stVideo = $('stVideo');
+  var stQueue = $('stQueue');
+  var lastUpdated = $('lastUpdated');
+
+  var pairCode = '';
+  var statusPollTimer = null;
+  var lastStatus = null;
+  var missedPolls = 0;
+
+  btnConnect.addEventListener('click', connect_);
+  pairCodeInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') connect_();
+  });
+
+  $('cbOpenCamera').addEventListener('click', function () { sendCommand_('openCamera'); });
+  $('cbCloseCamera').addEventListener('click', function () { sendCommand_('closeCamera'); });
+  $('cbStartRec').addEventListener('click', function () { sendCommand_('startRecording'); });
+  $('cbStopRec').addEventListener('click', function () { sendCommand_('stopRecording'); });
+  $('cbRetake').addEventListener('click', function () { sendCommand_('retake'); });
+  $('cbSkip').addEventListener('click', function () {
+    if (confirm('Bỏ qua đơn này (không upload video)?')) sendCommand_('skip');
+  });
+  $('cbUpload').addEventListener('click', function () { sendCommand_('upload'); });
+
+  function connect_() {
+    var code = (pairCodeInput.value || '').trim();
+    if (!/^d{4,8}$/.test(code)) {
+      connectMsg.textContent = 'Mã ghép nối không hợp lệ. Xem lại mã trên màn hình điện thoại.';
+      return;
+    }
+    if (!GAS_URL || GAS_URL.indexOf('DÁN_URL') !== -1) {
+      connectMsg.textContent = 'Chưa cấu hình GAS_WEB_APP_URL trong config.js';
+      return;
+    }
+    pairCode = code;
+    connectMsg.textContent = 'Đang kiểm tra kết nối...';
+    missedPolls = 0;
+    pollStatus_(true);
+    clearInterval(statusPollTimer);
+    statusPollTimer = setInterval(function () { pollStatus_(false); }, 1500);
+  }
+
+  function pollStatus_(isFirstCheck) {
+    if (!pairCode) return;
+    postJson_(GAS_URL, { action: 'statusPoll', accessCode: ACCESS_CODE, pairCode: pairCode }, 0, 0)
+      .then(function (res) {
+        if (!res || !res.ok) throw new Error((res && res.error) || 'Lỗi không xác định');
+        if (res.status) {
+          missedPolls = 0;
+          lastStatus = res.status;
+          renderStatus_(res.status);
+          setConnected_(true);
+          if (isFirstCheck) connectMsg.textContent = '';
+        } else {
+          missedPolls++;
+          if (isFirstCheck) {
+            connectMsg.textContent = 'Chưa thấy điện thoại. Kiểm tra lại: điện thoại đã bấm "Bật điều khiển từ xa" và đúng mã chưa?';
+          } else if (missedPolls > 20) {
+            // ~30s không có trạng thái mới -> có thể điện thoại đã tắt điều khiển từ xa
+            setConnected_(false);
+            connectMsg.textContent = 'Mất kết nối với điện thoại (không có phản hồi mới). Kiểm tra lại điện thoại rồi bấm Kết nối lại.';
+          }
+        }
+      })
+      .catch(function (err) {
+        if (isFirstCheck) connectMsg.textContent = 'Lỗi kết nối: ' + err.message;
+      });
+  }
+
+  function setConnected_(ok) {
+    connPill.className = 'pill ' + (ok ? 'pill-ok' : 'pill-error');
+    connPill.textContent = ok ? ('Đã kết nối (' + pairCode + ')') : 'Mất kết nối';
+    controlCard.classList.toggle('hidden', !ok);
+  }
+
+  function renderStatus_(status) {
+    curOrderCode.textContent = status.orderCode || '—';
+    setBool_(stCamera, status.cameraOpen, 'Đang mở', 'Đang tắt');
+    setBool_(stRecording, status.recording, 'Đang quay', 'Không');
+    setBool_(stVideo, status.hasVideo, 'Đã có', 'Chưa');
+    stQueue.textContent = status.queueCount || 0;
+    stQueue.className = 'v ' + (status.queueCount > 0 ? 'on' : 'off');
+
+    $('cbOpenCamera').disabled = !!status.cameraOpen || !!status.recording;
+    $('cbCloseCamera').disabled = !status.cameraOpen || !!status.recording;
+    $('cbStartRec').disabled = !status.cameraOpen || !!status.recording;
+    $('cbStopRec').disabled = !status.recording;
+    $('cbRetake').disabled = !status.hasVideo || !!status.recording;
+    $('cbUpload').disabled = !status.canUpload || !!status.recording;
+
+    if (status.ts) {
+      lastUpdated.textContent = 'Cập nhật lúc ' + new Date(status.ts).toLocaleTimeString('vi-VN');
+    }
+  }
+
+  function setBool_(el, val, onText, offText) {
+    el.textContent = val ? onText : offText;
+    el.className = 'v ' + (val ? 'on' : 'off');
+  }
+
+  function sendCommand_(cmd) {
+    if (!pairCode) return;
+    postJson_(GAS_URL, { action: 'controlSend', accessCode: ACCESS_CODE, pairCode: pairCode, command: cmd }, 1, 500)
+      .catch(function () { /* lỗi mạng tạm thời, nhân viên có thể bấm lại */ });
+  }
+
+  function postJson_(url, body, retriesLeft, baseDelayMs) {
+    if (retriesLeft === undefined) retriesLeft = 2;
+    if (baseDelayMs === undefined) baseDelayMs = 800;
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(body)
+    }).then(function (res) { return res.json(); })
+      .catch(function (err) {
+        if (retriesLeft <= 0) throw err;
+        return sleep_(baseDelayMs).then(function () {
+          return postJson_(url, body, retriesLeft - 1, baseDelayMs * 1.6);
+        });
+      });
+  }
+
+  function sleep_(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  }
+
+})();
+</script>
+</body>
+</html>
