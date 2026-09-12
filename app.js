@@ -288,26 +288,41 @@
       }
     }).then(function (stream) {
       mediaStream = stream;
-      livePreview.srcObject = stream;
-      playbackPreview.classList.add('hidden');
-      btnOpenCamera.classList.add('hidden');
-      btnCloseCamera.classList.remove('hidden');
-      btnStartRec.classList.remove('hidden');
-      zoomLevel = 1;
-      zoomSlider.value = '1';
-      zoomLabel.textContent = '1.0x';
-      zoomControl.classList.remove('hidden');
-      applyContinuousFocus_(stream);
-      startDrawLoop_();
-      requestGeo_();
+      showLiveCameraUI_();
       pushRemoteStatus_();
     }).catch(function (err) {
       alert('Không mở được camera/micro: ' + err.message + '\nHãy cấp quyền Camera & Micro cho trình duyệt trong Cài đặt máy.');
     });
   }
 
-  // Cho phép nhân viên tắt camera thủ công sau khi mở (trước khi bắt đầu
-  // quay) — ví dụ mở nhầm, hoặc cần tắt để đỡ hao pin trong lúc chờ.
+  // Hiện lại giao diện xem trực tiếp khi mediaStream đang có sẵn (không xin
+  // quyền lại) — dùng chung cho: vừa mở camera lần đầu, "Quay lại" sau khi
+  // xem video vừa quay, và sẵn sàng cho cuộc gọi kế tiếp sau khi Tải lên/Bỏ
+  // qua. Nhờ TÁI SỬ DỤNG mediaStream đang chạy (không gọi lại getUserMedia)
+  // nên trình duyệt KHÔNG hiện lại hộp thoại xin quyền Camera/Micro mỗi lần
+  // — đặc biệt quan trọng trên iPhone mở qua icon Màn hình chính, chỉ cần
+  // bấm "Cho phép" 1 LẦN cho cả ca làm việc, trừ khi bấm "Tắt camera" thủ công.
+  function showLiveCameraUI_() {
+    livePreview.srcObject = mediaStream;
+    playbackPreview.classList.add('hidden');
+    playbackPreview.src = '';
+    btnOpenCamera.classList.add('hidden');
+    btnCloseCamera.classList.remove('hidden');
+    btnStartRec.classList.remove('hidden');
+    btnRetake.classList.add('hidden');
+    zoomLevel = 1;
+    zoomSlider.value = '1';
+    zoomLabel.textContent = '1.0x';
+    zoomControl.classList.remove('hidden');
+    applyContinuousFocus_(mediaStream);
+    startDrawLoop_();
+    requestGeo_();
+  }
+
+  // Nhân viên chủ động tắt hẳn camera (giải phóng phần cứng) — ví dụ mở
+  // nhầm, hoặc nghỉ giải lao lâu muốn đỡ hao pin. Đây là nơi DUY NHẤT thật
+  // sự dừng mediaStream trong luồng quay bình thường; bấm "Mở camera" lại
+  // sau đó sẽ xin quyền Camera/Micro lại từ đầu.
   function closeCamera_() {
     if (mediaStream) {
       mediaStream.getTracks().forEach(function (t) { t.stop(); });
@@ -505,13 +520,14 @@
 
     stopDrawLoop_();
 
-    // Tắt camera sau khi quay xong để tiết kiệm pin
-    if (mediaStream) {
-      mediaStream.getTracks().forEach(function (t) { t.stop(); });
-      mediaStream = null;
-    }
-
+    // KHÔNG tắt camera ở đây nữa (trước đây tắt để tiết kiệm pin, nhưng làm
+    // vậy thì mỗi cuộc gọi mới lại phải xin quyền Camera/Micro lại từ đầu —
+    // rất bất tiện, nhất là iPhone mở qua icon Màn hình chính). Giữ
+    // mediaStream chạy nền, chỉ ẩn preview trực tiếp để hiện video vừa quay
+    // lên xem lại. Muốn tắt hẳn để tiết kiệm pin thì bấm "Tắt camera" thủ
+    // công (nút vẫn hiện sẵn bên dưới trong lúc xem lại).
     zoomControl.classList.add('hidden');
+    btnCloseCamera.classList.remove('hidden');
     playbackPreview.src = URL.createObjectURL(recordedBlob);
     playbackPreview.classList.remove('hidden');
 
@@ -526,16 +542,23 @@
   function retake_() {
     recordedBlob = null;
     recordedChunks = [];
-    playbackPreview.classList.add('hidden');
-    playbackPreview.src = '';
     videoInfo.textContent = '';
     geoStatusEl.textContent = '';
     btnRetake.classList.add('hidden');
-    btnOpenCamera.classList.remove('hidden');
     resultMsg.textContent = '';
     resultMsg.className = '';
     if (recordCanvas.width && recordCanvas.height) {
       canvasCtx.clearRect(0, 0, recordCanvas.width, recordCanvas.height);
+    }
+    if (mediaStream) {
+      // Camera vẫn đang chạy (không còn tự tắt sau khi quay xong) -> quay
+      // lại được ngay, không cần "Mở camera" / không xin quyền lại.
+      showLiveCameraUI_();
+    } else {
+      // Trường hợp hiếm: đã lỡ bấm "Tắt camera" thủ công trong lúc xem lại.
+      playbackPreview.classList.add('hidden');
+      playbackPreview.src = '';
+      btnOpenCamera.classList.remove('hidden');
     }
     validateForm_();
     pushRemoteStatus_();
@@ -850,18 +873,6 @@
   // liên tục được. Giữ nguyên "Người gọi" và "Ngày gọi" vì thường gọi nhiều
   // đơn liên tiếp trong ngày.
   function resetFormForNextCall_() {
-    // Nếu camera còn đang mở (ví dụ bấm "Bỏ qua" sau khi mở camera nhưng
-    // chưa quay) thì tắt luôn cho gọn, tránh camera treo mở không cần thiết.
-    if (mediaStream) {
-      mediaStream.getTracks().forEach(function (t) { t.stop(); });
-      mediaStream = null;
-      stopDrawLoop_();
-      livePreview.srcObject = null;
-    }
-    zoomControl.classList.add('hidden');
-    btnCloseCamera.classList.add('hidden');
-    btnStartRec.classList.add('hidden');
-
     orderCodeEl.value = '';
     reasonEl.value = '';
     reasonOtherEl.classList.add('hidden');
@@ -869,14 +880,24 @@
     staffNoteEl.value = '';
     recordedBlob = null;
     recordedChunks = [];
-    playbackPreview.classList.add('hidden');
-    playbackPreview.src = '';
     videoInfo.textContent = '';
     btnRetake.classList.add('hidden');
-    btnOpenCamera.classList.remove('hidden');
     btnUpload.disabled = true;
     if (recordCanvas.width && recordCanvas.height) {
       canvasCtx.clearRect(0, 0, recordCanvas.width, recordCanvas.height);
+    }
+
+    // Giữ camera đang chạy (nếu có) để vào cuộc gọi kế tiếp quay được ngay,
+    // không phải "Mở camera" / xin quyền lại từ đầu cho mỗi đơn hàng.
+    if (mediaStream) {
+      showLiveCameraUI_();
+    } else {
+      playbackPreview.classList.add('hidden');
+      playbackPreview.src = '';
+      zoomControl.classList.add('hidden');
+      btnCloseCamera.classList.add('hidden');
+      btnStartRec.classList.add('hidden');
+      btnOpenCamera.classList.remove('hidden');
     }
     pushRemoteStatus_();
   }
@@ -946,12 +967,19 @@
     // request/chờ khi mạng chập chờn.
     postJson_(GAS_URL, { action: 'controlPoll', accessCode: ACCESS_CODE, pairCode: pairCode }, 0, 0)
       .then(function (res) {
-        if (res && res.ok && res.command) handleRemoteCommand_(res.command);
+        if (res && res.ok && res.command) handleRemoteCommand_(res.command, res.data);
       })
       .catch(function () { /* bỏ qua, thử lại ở lượt poll sau */ });
   }
 
-  function handleRemoteCommand_(cmd) {
+  // cmd: tên lệnh. data (tuỳ chọn — chỉ đi kèm lệnh 'skip'/'upload'): thông
+  // tin đơn hàng (mã đơn, người gọi, ngày gọi, lý do, ghi chú) nhân viên vừa
+  // nhập trên máy tính -> điền thẳng vào form của điện thoại (không ai nhìn
+  // màn hình điện thoại lúc này vì nó chỉ làm camera) TRƯỚC khi chạy đúng
+  // hành động skip_/doUpload_ sẵn có, để không phải viết lại logic ghi
+  // Sheet/upload riêng cho luồng điều khiển từ xa.
+  function handleRemoteCommand_(cmd, data) {
+    if (data) applyRemoteOrderData_(data);
     switch (cmd) {
       case 'openCamera': openCamera_(); break;
       case 'closeCamera': closeCamera_(); break;
@@ -962,6 +990,26 @@
       case 'upload': doUpload_(); break;
       default: break; // lệnh lạ -> bỏ qua, không làm gì
     }
+  }
+
+  function applyRemoteOrderData_(data) {
+    if (typeof data.orderCode === 'string') orderCodeEl.value = data.orderCode.toUpperCase();
+    if (typeof data.callerName === 'string') callerNameEl.value = data.callerName;
+    if (typeof data.callDate === 'string') callDateEl.value = data.callDate;
+    if (typeof data.reason === 'string') {
+      var hasOption = Array.prototype.some.call(reasonEl.options, function (o) { return o.value === data.reason; });
+      if (hasOption) {
+        reasonEl.value = data.reason;
+        reasonOtherEl.classList.add('hidden');
+        reasonOtherEl.value = '';
+      } else {
+        reasonEl.value = '__OTHER__';
+        reasonOtherEl.classList.remove('hidden');
+        reasonOtherEl.value = data.reason;
+      }
+    }
+    if (typeof data.staffNote === 'string') staffNoteEl.value = data.staffNote;
+    validateForm_();
   }
 
   function pushRemoteStatus_() {
