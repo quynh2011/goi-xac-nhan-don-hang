@@ -123,6 +123,25 @@ textarea { resize: vertical; }
 .btn-danger { background: var(--danger); color: #2a0505; }
 .btn-block { width: 100%; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-block.btn-skip { margin-top: 8px; }
+
+.pair-code-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pair-code {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  background: #0b1220;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+}
 
 .video-wrap {
   position: relative;
@@ -194,6 +213,13 @@ body.recording-fullscreen #recordControls {
   padding: 8px 12px;
   border-radius: 999px;
   z-index: 5;
+  transition: bottom 0.15s ease;
+}
+/* Khi đang quay (toàn màn hình), thanh nút Dừng quay/Quay lại nằm cố định ở
+   đáy màn hình (z-index 300) — đẩy thanh zoom lên cao hơn để 2 thứ không đè
+   lên nhau, cả hai vẫn bấm/kéo được bình thường. */
+body.recording-fullscreen .zoom-control {
+  bottom: 96px;
 }
 .zoom-control .zoom-icon { font-size: 14px; }
 .zoom-control input[type="range"] {
