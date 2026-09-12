@@ -83,6 +83,18 @@ function doPost(e) {
     if (action === 'logRow') {
       return jsonOut(logRow_(body));
     }
+    if (action === 'controlSend') {
+      return jsonOut(controlSend_(body));
+    }
+    if (action === 'controlPoll') {
+      return jsonOut(controlPoll_(body));
+    }
+    if (action === 'statusSend') {
+      return jsonOut(statusSend_(body));
+    }
+    if (action === 'statusPoll') {
+      return jsonOut(statusPoll_(body));
+    }
     return jsonOut({ ok: false, error: 'action không hợp lệ: ' + action });
   } catch (err) {
     return jsonOut({ ok: false, error: String(err) });
@@ -282,6 +294,89 @@ function getConfigData_() {
   } catch (err) {
     return { ok: true, callers: FALLBACK_CALLERS, reasons: FALLBACK_REASONS, usingFallback: true, error: String(err) };
   }
+}
+
+// ============================================================================
+// ĐIỀU KHIỂN TỪ XA: máy tính điều khiển, điện thoại chỉ làm camera. Dùng
+// CacheService (đã dùng sẵn cho uploadChunk_) làm "hộp thư" tạm giữa 2 bên,
+// ghép cặp bằng "mã ghép nối" (pairCode, 6 số) do điện thoại tự sinh và hiển
+// thị cho nhân viên gõ vào máy tính. Không cần thêm dịch vụ realtime trả phí
+// nào khác — đủ dùng cho tần suất poll ~1-2 giây/lần trong giờ làm việc.
+//   - controlSend (máy tính gửi lệnh): lưu lệnh vào cache theo pairCode.
+//   - controlPoll (điện thoại xin lệnh): đọc RỒI XÓA (chỉ dùng 1 lần) để lệnh
+//     cũ không bị lặp lại ở lượt poll kế tiếp.
+//   - statusSend (điện thoại báo trạng thái): ghi đè trạng thái mới nhất.
+//   - statusPoll (máy tính xin trạng thái): đọc trạng thái mới nhất, không xóa.
+// TTL ngắn (60 giây) vì đây là dữ liệu polling thời gian thực, không cần lưu lâu.
+// ============================================================================
+function controlSend_(body) {
+  var pairCode = String(body.pairCode || '').trim();
+  if (!pairCode) return { ok: false, error: 'Thiếu mã ghép nối' };
+  var command = body.command;
+  if (!command) return { ok: false, error: 'Thiếu lệnh điều khiển' };
+  // data (tuỳ chọn): thông tin đơn hàng (mã đơn, người gọi, ngày gọi, lý do,
+  // ghi chú) đi kèm lệnh 'skip'/'upload' khi nhân viên nhập liệu trên máy
+  // tính thay vì trên điện thoại.
+  var data = body.data || null;
+  var cache = CacheService.getScriptCache();
+  cache.put('ctrl_cmd_' + pairCode, JSON.stringify({ command: command, data: data, ts: Date.now() }), 60);
+  return { ok: true };
+}
+
+function controlPoll_(body) {
+  var pairCode = String(body.pairCode || '').trim();
+  if (!pairCode) return { ok: false, error: 'Thiếu mã ghép nối' };
+  var cache = CacheService.getScriptCache();
+  var key = 'ctrl_cmd_' + pairCode;
+
+  // Đọc-rồi-xoá (get + remove) phải chạy TRỌN VẸN như 1 thao tác duy nhất.
+  // Nếu không, khi có 2 lượt poll từ điện thoại chồng lên nhau (mạng chậm,
+  // lượt mới bắn ra trước khi lượt cũ kịp xong), cả 2 có thể cùng đọc được y
+  // hệt 1 lệnh TRƯỚC KHI lượt nào kịp xoá nó -> lệnh (ví dụ "startRecording")
+  // bị phát tới điện thoại 2 lần, gây quay đè 2 phiên video lên nhau -> video
+  // hỏng, mở lên báo lỗi định dạng. LockService khoá đúng đoạn get+remove
+  // này lại để chỉ 1 lượt poll duy nhất lấy được lệnh.
+  var lock = LockService.getScriptLock();
+  var raw = null;
+  try {
+    lock.waitLock(5000);
+    raw = cache.get(key);
+    if (raw) cache.remove(key); // chỉ phát lệnh 1 lần
+  } finally {
+    lock.releaseLock();
+  }
+
+  if (!raw) return { ok: true, command: null };
+  var data;
+  try {
+    data = JSON.parse(raw);
+  } catch (err) {
+    return { ok: true, command: null };
+  }
+  return { ok: true, command: data.command, data: data.data || null, ts: data.ts };
+}
+
+function statusSend_(body) {
+  var pairCode = String(body.pairCode || '').trim();
+  if (!pairCode) return { ok: false, error: 'Thiếu mã ghép nối' };
+  var cache = CacheService.getScriptCache();
+  cache.put('ctrl_status_' + pairCode, JSON.stringify(body.status || {}), 60);
+  return { ok: true };
+}
+
+function statusPoll_(body) {
+  var pairCode = String(body.pairCode || '').trim();
+  if (!pairCode) return { ok: false, error: 'Thiếu mã ghép nối' };
+  var cache = CacheService.getScriptCache();
+  var raw = cache.get('ctrl_status_' + pairCode);
+  if (!raw) return { ok: true, status: null };
+  var data;
+  try {
+    data = JSON.parse(raw);
+  } catch (err) {
+    return { ok: true, status: null };
+  }
+  return { ok: true, status: data };
 }
 
 function sanitizeFileName_(name) {
