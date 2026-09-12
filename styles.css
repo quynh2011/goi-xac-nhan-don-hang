@@ -1,12 +1,41 @@
+/* ============================================================================
+   GIAO DIỆN CHUẨN macOS + TÔNG MÀU GIAO HÀNG NHANH (GHN)
+   - Cam GHN (#FF7300) làm màu nhấn chính (nút hành động chính).
+   - Xanh GHN (#007ED4) làm màu phụ (trạng thái/kết nối/focus, giống hệt màu
+     xanh hệ thống của macOS nên rất "thuận tay" khi dùng trên máy Mac).
+   - Nền xám nhạt + thẻ (card) trắng bo góc lớn, đổ bóng nhẹ, thanh trên cùng
+     kính mờ (backdrop-blur) — đúng ngôn ngữ thiết kế macOS Sonoma/Ventura.
+   ============================================================================ */
 :root {
-  --bg: #0f172a;
-  --card: #1e293b;
-  --text: #e2e8f0;
-  --muted: #94a3b8;
-  --primary: #22c55e;
-  --primary-dark: #16a34a;
-  --danger: #ef4444;
-  --border: #334155;
+  --bg: #f5f5f7;
+  --bg-soft: #eceef1;
+  --card: #ffffff;
+  --text: #1d1d1f;
+  --muted: #6e6e73;
+
+  --primary: #FF7300;        /* Cam GHN */
+  --primary-dark: #db6300;
+  --primary-tint: #fff1e5;
+
+  --secondary: #007ED4;      /* Xanh GHN */
+  --secondary-dark: #0066ac;
+  --secondary-tint: #e6f4ff;
+
+  --success: #1f9d55;
+  --success-tint: #e5f7ec;
+  --danger: #ff3b30;
+  --danger-tint: #ffece9;
+
+  --border: #d9d9de;
+  --divider: rgba(0, 0, 0, 0.08);
+
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
+  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.16);
 }
 
 * { box-sizing: border-box; }
@@ -16,38 +45,44 @@ body {
   padding: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Arial, sans-serif;
   padding-bottom: 40px;
+  -webkit-font-smoothing: antialiased;
 }
 
 .topbar {
-  padding: 16px;
+  padding: 14px 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--divider);
   position: sticky;
   top: 0;
-  background: var(--bg);
+  background: rgba(245, 245, 247, 0.78);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
   z-index: 10;
 }
 
 .topbar h1 {
   font-size: 16px;
+  font-weight: 700;
   margin: 0;
+  letter-spacing: -0.2px;
 }
 
 .pill {
   font-size: 12px;
-  padding: 4px 10px;
-  border-radius: 999px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
   white-space: nowrap;
 }
-.pill-checking { background: #475569; color: #e2e8f0; }
-.pill-ok { background: #14532d; color: #86efac; }
-.pill-error { background: #7f1d1d; color: #fecaca; }
+.pill-checking { background: var(--bg-soft); color: var(--muted); }
+.pill-ok { background: var(--secondary-tint); color: var(--secondary-dark); }
+.pill-error { background: var(--danger-tint); color: #c62a20; }
 
 .container {
   max-width: 480px;
@@ -60,22 +95,26 @@ body {
 
 .card {
   background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 16px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: 18px;
 }
 
 .card h2 {
   font-size: 15px;
+  font-weight: 700;
   margin: 0 0 12px 0;
-  color: var(--muted);
+  color: var(--text);
+  letter-spacing: -0.1px;
 }
 
 label {
   display: block;
   font-size: 13px;
   color: var(--muted);
-  margin: 12px 0 4px;
+  margin: 12px 0 6px;
+  font-weight: 500;
 }
 label:first-of-type { margin-top: 0; }
 
@@ -85,11 +124,22 @@ select,
 textarea {
   width: 100%;
   padding: 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: #0b1220;
+  background: var(--bg);
   color: var(--text);
   font-size: 16px;
+  font-family: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input[type="text"]:focus,
+input[type="date"]:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--secondary);
+  box-shadow: 0 0 0 4px var(--secondary-tint);
+  background: var(--card);
 }
 
 input#orderCode {
@@ -111,18 +161,23 @@ textarea { resize: vertical; }
 
 .btn {
   padding: 12px 16px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: none;
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
+  font-family: inherit;
+  transition: transform 0.06s ease, opacity 0.15s ease, background 0.15s ease;
 }
-.btn-primary { background: var(--primary); color: #04220f; }
-.btn-primary:active { background: var(--primary-dark); }
-.btn-secondary { background: #334155; color: var(--text); }
-.btn-danger { background: var(--danger); color: #2a0505; }
+.btn-primary { background: var(--primary); color: #ffffff; }
+.btn-primary:active { background: var(--primary-dark); transform: scale(0.98); }
+.btn-secondary { background: var(--bg-soft); color: var(--text); border: 1px solid var(--border); }
+.btn-secondary:active { background: var(--border); transform: scale(0.98); }
+.btn-danger { background: var(--danger); color: #ffffff; }
+.btn-danger:active { transform: scale(0.98); }
 .btn-block { width: 100%; }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn:disabled:active { transform: none; }
 .btn-block.btn-skip { margin-top: 8px; }
 
 .pair-code-box {
@@ -135,11 +190,11 @@ textarea { resize: vertical; }
   font-size: 26px;
   font-weight: 700;
   letter-spacing: 3px;
-  background: #0b1220;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  background: var(--primary-tint);
+  border: 1px solid rgba(255, 115, 0, 0.25);
+  border-radius: var(--radius-sm);
   padding: 8px 14px;
-  color: var(--primary);
+  color: var(--primary-dark);
   font-variant-numeric: tabular-nums;
 }
 
@@ -148,7 +203,7 @@ textarea { resize: vertical; }
   width: 100%;
   aspect-ratio: 3 / 4;
   background: #000;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
   margin-bottom: 12px;
 }
@@ -193,9 +248,9 @@ body.recording-fullscreen #recordControls {
   top: 10px;
   left: 10px;
   background: rgba(0,0,0,0.6);
-  color: #fecaca;
+  color: #ff6961;
   padding: 4px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 12px;
   font-weight: 700;
   z-index: 5;
@@ -211,7 +266,7 @@ body.recording-fullscreen #recordControls {
   gap: 8px;
   background: rgba(0,0,0,0.55);
   padding: 8px 12px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   z-index: 5;
   transition: bottom 0.15s ease;
 }
@@ -237,26 +292,27 @@ body.recording-fullscreen .zoom-control {
 
 .progress-bar {
   width: 100%;
-  height: 10px;
-  background: #0b1220;
-  border-radius: 999px;
+  height: 8px;
+  background: var(--bg-soft);
+  border-radius: var(--radius-pill);
   overflow: hidden;
   border: 1px solid var(--border);
 }
 .progress-fill {
   height: 100%;
   width: 0%;
-  background: var(--primary);
+  background: linear-gradient(90deg, var(--secondary), var(--primary));
   transition: width 0.2s ease;
 }
 
-#resultMsg { font-size: 14px; }
-#resultMsg.ok { color: #86efac; }
-#resultMsg.error { color: #fecaca; }
+#resultMsg { font-size: 14px; font-weight: 500; }
+#resultMsg.ok { color: var(--success); }
+#resultMsg.error { color: #c62a20; }
 
 .queue-item {
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 1px solid var(--divider);
+  background: var(--bg);
+  border-radius: var(--radius-md);
   padding: 10px 12px;
   margin-bottom: 8px;
 }
@@ -274,8 +330,8 @@ body.recording-fullscreen .zoom-control {
   color: var(--muted);
   margin-top: 2px;
 }
-.queue-item.status-success .queue-status { color: #86efac; }
-.queue-item.status-error .queue-status { color: #fecaca; }
+.queue-item.status-success .queue-status { color: var(--success); }
+.queue-item.status-error .queue-status { color: #c62a20; }
 .queue-item .progress-bar { margin-top: 8px; height: 6px; }
 .queue-item .btn-retry {
   margin-top: 8px;
@@ -286,7 +342,7 @@ body.recording-fullscreen .zoom-control {
 .modal {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.85);
+  background: rgba(0,0,0,0.5);
   z-index: 50;
   display: flex;
   align-items: center;
@@ -295,7 +351,8 @@ body.recording-fullscreen .zoom-control {
 }
 .modal-content {
   background: var(--card);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
   width: 100%;
   max-width: 420px;
   overflow: hidden;
@@ -304,9 +361,9 @@ body.recording-fullscreen .zoom-control {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-  font-weight: 600;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--divider);
+  font-weight: 700;
 }
 .btn-close {
   background: none;
@@ -316,3 +373,41 @@ body.recording-fullscreen .zoom-control {
   cursor: pointer;
 }
 #reader { width: 100%; }
+
+/* ---- Xem trực tiếp điện thoại đang quay gì (dùng trên control.html) ---- */
+.live-preview-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #000;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.live-preview-wrap img#livePreviewImg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.live-preview-placeholder {
+  color: #98989d;
+  font-size: 13px;
+  text-align: center;
+  padding: 0 16px;
+}
+
+.remote-error {
+  background: var(--danger-tint);
+  color: #c62a20;
+  border: 1px solid rgba(255, 59, 48, 0.3);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
