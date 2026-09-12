@@ -44,10 +44,12 @@
   var zoomLabel = $('zoomLabel');
 
   var btnOpenCamera = $('btnOpenCamera');
+  var btnCloseCamera = $('btnCloseCamera');
   var btnStartRec = $('btnStartRec');
   var btnStopRec = $('btnStopRec');
   var btnRetake = $('btnRetake');
   var btnUpload = $('btnUpload');
+  var btnSkip = $('btnSkip');
   var btnScan = $('btnScan');
   var btnCloseScan = $('btnCloseScan');
 
@@ -55,6 +57,11 @@
   var resultMsg = $('resultMsg');
   var queueSection = $('queueSection');
   var uploadQueueList = $('uploadQueueList');
+
+  // ---- Điều khiển từ xa (máy tính điều khiển, điện thoại chỉ làm camera) ----
+  var pairCodeDisplay = $('pairCodeDisplay');
+  var btnTogglePair = $('btnTogglePair');
+  var pairStatus = $('pairStatus');
 
   // ---- State ----
   var mediaStream = null;
@@ -92,6 +99,14 @@
   var zoomLevel = 1;
   var geoPosition = null; // { lat, lng, acc }
 
+  // Mã ghép nối để máy tính điều khiển tìm đúng "phòng" trên máy chủ. Sinh 1
+  // lần rồi giữ nguyên trong sessionStorage để lỡ có refresh trang giữa ca
+  // làm thì máy tính vẫn còn kết nối được bằng mã cũ.
+  var pairCode = getOrCreatePairCode_();
+  var remoteControlEnabled = false;
+  var controlPollTimer = null;
+  var statusPushTimer = null;
+
   // ============================================================================
   // Khởi tạo
   // ============================================================================
@@ -101,6 +116,7 @@
     callDateEl.value = todayStr_();
     loadConfig_();
     bindEvents_();
+    pairCodeDisplay.textContent = pairCode;
   }
 
   function bindEvents_() {
@@ -130,11 +146,15 @@
     btnCloseScan.addEventListener('click', closeScanner_);
 
     btnOpenCamera.addEventListener('click', openCamera_);
+    btnCloseCamera.addEventListener('click', closeCamera_);
     btnStartRec.addEventListener('click', startRecording_);
     btnStopRec.addEventListener('click', stopRecording_);
     btnRetake.addEventListener('click', retake_);
 
     btnUpload.addEventListener('click', doUpload_);
+    btnSkip.addEventListener('click', skip_);
+
+    btnTogglePair.addEventListener('click', toggleRemoteControl_);
 
     livePreview.addEventListener('loadedmetadata', function () {
       var vw = livePreview.videoWidth || 1280;
@@ -271,6 +291,7 @@
       livePreview.srcObject = stream;
       playbackPreview.classList.add('hidden');
       btnOpenCamera.classList.add('hidden');
+      btnCloseCamera.classList.remove('hidden');
       btnStartRec.classList.remove('hidden');
       zoomLevel = 1;
       zoomSlider.value = '1';
@@ -279,9 +300,29 @@
       applyContinuousFocus_(stream);
       startDrawLoop_();
       requestGeo_();
+      pushRemoteStatus_();
     }).catch(function (err) {
       alert('Không mở được camera/micro: ' + err.message + '\nHãy cấp quyền Camera & Micro cho trình duyệt trong Cài đặt máy.');
     });
+  }
+
+  // Cho phép nhân viên tắt camera thủ công sau khi mở (trước khi bắt đầu
+  // quay) — ví dụ mở nhầm, hoặc cần tắt để đỡ hao pin trong lúc chờ.
+  function closeCamera_() {
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(function (t) { t.stop(); });
+      mediaStream = null;
+    }
+    stopDrawLoop_();
+    livePreview.srcObject = null;
+    zoomControl.classList.add('hidden');
+    btnStartRec.classList.add('hidden');
+    btnCloseCamera.classList.add('hidden');
+    btnOpenCamera.classList.remove('hidden');
+    if (recordCanvas.width && recordCanvas.height) {
+      canvasCtx.clearRect(0, 0, recordCanvas.width, recordCanvas.height);
+    }
+    pushRemoteStatus_();
   }
 
   // Bật lấy nét liên tục (continuous auto-focus) nếu thiết bị hỗ trợ, để video luôn nét
@@ -438,11 +479,13 @@
     }, 1000);
 
     btnStartRec.classList.add('hidden');
+    btnCloseCamera.classList.add('hidden'); // đang quay thì không cho tắt camera giữa chừng
     btnStopRec.classList.remove('hidden');
 
     // Toàn màn hình khi quay để lấy được khung hình rộng hơn
     document.body.classList.add('recording-fullscreen');
     videoWrap.classList.add('fullscreen');
+    pushRemoteStatus_();
   }
 
   function stopRecording_() {
@@ -454,6 +497,7 @@
     btnStopRec.classList.add('hidden');
     document.body.classList.remove('recording-fullscreen');
     videoWrap.classList.remove('fullscreen');
+    pushRemoteStatus_();
   }
 
   function onRecordingStopped_() {
@@ -476,6 +520,7 @@
 
     btnRetake.classList.remove('hidden');
     validateForm_();
+    pushRemoteStatus_();
   }
 
   function retake_() {
@@ -493,6 +538,36 @@
       canvasCtx.clearRect(0, 0, recordCanvas.width, recordCanvas.height);
     }
     validateForm_();
+    pushRemoteStatus_();
+  }
+
+  // "Bỏ qua": dùng cho đơn KHÔNG cần quay video — vẫn ghi 1 dòng vào Sheet để
+  // có dấu vết đã gọi/xử lý đơn này, chỉ là không có video đính kèm, rồi trả
+  // form về sẵn sàng cho cuộc gọi kế tiếp ngay (giống doUpload_).
+  function skip_() {
+    var orderCode = orderCodeEl.value.trim().toUpperCase();
+    var hasBasicInfo = orderCode !== '' && callerNameEl.value !== '' && callDateEl.value !== '' && getReasonValue_() !== '';
+
+    if (hasBasicInfo && GAS_URL && GAS_URL.indexOf('DÁN_URL') === -1) {
+      var note = staffNoteEl.value.trim();
+      postJson_(GAS_URL, {
+        action: 'logRow',
+        accessCode: ACCESS_CODE,
+        orderCode: orderCode,
+        callerName: callerNameEl.value,
+        callDate: callDateEl.value,
+        reason: getReasonValue_(),
+        staffNote: (note ? note + ' — ' : '') + '[Bỏ qua, không quay video]',
+        fileName: '',
+        fileId: '',
+        fileUrl: ''
+      }, 2, 1000).catch(function () { /* ghi nền, lỗi không chặn thao tác tiếp theo */ });
+    }
+
+    resetFormForNextCall_();
+    showResult_(true, hasBasicInfo
+      ? '⏭️ Đã bỏ qua (đã ghi Sheet, không có video). Sẵn sàng cho cuộc gọi tiếp theo.'
+      : '⏭️ Đã bỏ qua. Sẵn sàng cho cuộc gọi tiếp theo.');
   }
 
   function pickMimeType_() {
@@ -775,6 +850,18 @@
   // liên tục được. Giữ nguyên "Người gọi" và "Ngày gọi" vì thường gọi nhiều
   // đơn liên tiếp trong ngày.
   function resetFormForNextCall_() {
+    // Nếu camera còn đang mở (ví dụ bấm "Bỏ qua" sau khi mở camera nhưng
+    // chưa quay) thì tắt luôn cho gọn, tránh camera treo mở không cần thiết.
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(function (t) { t.stop(); });
+      mediaStream = null;
+      stopDrawLoop_();
+      livePreview.srcObject = null;
+    }
+    zoomControl.classList.add('hidden');
+    btnCloseCamera.classList.add('hidden');
+    btnStartRec.classList.add('hidden');
+
     orderCodeEl.value = '';
     reasonEl.value = '';
     reasonOtherEl.classList.add('hidden');
@@ -791,6 +878,7 @@
     if (recordCanvas.width && recordCanvas.height) {
       canvasCtx.clearRect(0, 0, recordCanvas.width, recordCanvas.height);
     }
+    pushRemoteStatus_();
   }
 
   function sleep_(ms) {
@@ -805,6 +893,90 @@
     } catch (e) {
       return new Date().toISOString().slice(0, 10);
     }
+  }
+
+  // ============================================================================
+  // ĐIỀU KHIỂN TỪ XA - điện thoại đặt cố định làm camera, nhân viên bấm nút
+  // từ trang control.html trên máy tính (Windows/macOS đều dùng trình duyệt
+  // nên chạy được như nhau). Cơ chế: cả 2 bên cùng gọi vào GAS backend hiện
+  // có (không cần dịch vụ realtime trả phí nào khác):
+  //   - Máy tính gửi lệnh (controlSend) theo "mã ghép nối" hiển thị trên điện
+  //     thoại -> điện thoại poll (controlPoll) mỗi ~1.5s để lấy lệnh mới.
+  //   - Điện thoại đẩy trạng thái hiện tại (statusSend) mỗi ~2s (và sau mỗi
+  //     thao tác) -> máy tính poll (statusPoll) để hiển thị + bật/tắt nút cho
+  //     đúng trạng thái thực tế của điện thoại.
+  // Mặc định TẮT (nhân viên tự bấm "Bật điều khiển từ xa" khi cần) để đỡ tốn
+  // request khi không dùng tới, và tránh việc 2 bên vô tình giẫm lệnh của
+  // nhau nếu không ai định dùng tính năng này.
+  // ============================================================================
+  function getOrCreatePairCode_() {
+    try {
+      var saved = sessionStorage.getItem('pairCode');
+      if (saved) return saved;
+      var code = String(Math.floor(100000 + Math.random() * 900000));
+      sessionStorage.setItem('pairCode', code);
+      return code;
+    } catch (e) {
+      return String(Math.floor(100000 + Math.random() * 900000));
+    }
+  }
+
+  function toggleRemoteControl_() {
+    remoteControlEnabled = !remoteControlEnabled;
+    if (remoteControlEnabled) {
+      btnTogglePair.textContent = '🔴 Tắt điều khiển từ xa';
+      pairStatus.textContent = 'Đang bật — nhập mã ' + pairCode + ' vào control.html trên máy tính để kết nối.';
+      pushRemoteStatus_();
+      controlPollTimer = setInterval(pollRemoteCommand_, 1500);
+      statusPushTimer = setInterval(pushRemoteStatus_, 2000);
+    } else {
+      btnTogglePair.textContent = '📡 Bật điều khiển từ xa';
+      pairStatus.textContent = 'Đang tắt — điện thoại chưa nhận lệnh từ máy tính nào.';
+      clearInterval(controlPollTimer);
+      clearInterval(statusPushTimer);
+      controlPollTimer = null;
+      statusPushTimer = null;
+    }
+  }
+
+  function pollRemoteCommand_() {
+    if (!remoteControlEnabled || !GAS_URL || GAS_URL.indexOf('DÁN_URL') !== -1) return;
+    // Không cho postJson_ tự thử lại ở đây (retriesLeft=0): poll thất bại 1
+    // lần thì bỏ qua, lượt poll kế tiếp (1.5s sau) sẽ tự thử lại, tránh dồn
+    // request/chờ khi mạng chập chờn.
+    postJson_(GAS_URL, { action: 'controlPoll', accessCode: ACCESS_CODE, pairCode: pairCode }, 0, 0)
+      .then(function (res) {
+        if (res && res.ok && res.command) handleRemoteCommand_(res.command);
+      })
+      .catch(function () { /* bỏ qua, thử lại ở lượt poll sau */ });
+  }
+
+  function handleRemoteCommand_(cmd) {
+    switch (cmd) {
+      case 'openCamera': openCamera_(); break;
+      case 'closeCamera': closeCamera_(); break;
+      case 'startRecording': startRecording_(); break;
+      case 'stopRecording': stopRecording_(); break;
+      case 'retake': retake_(); break;
+      case 'skip': skip_(); break;
+      case 'upload': doUpload_(); break;
+      default: break; // lệnh lạ -> bỏ qua, không làm gì
+    }
+  }
+
+  function pushRemoteStatus_() {
+    if (!remoteControlEnabled || !GAS_URL || GAS_URL.indexOf('DÁN_URL') !== -1) return;
+    var status = {
+      orderCode: orderCodeEl.value.trim(),
+      cameraOpen: !!mediaStream,
+      recording: !!(mediaRecorder && mediaRecorder.state === 'recording'),
+      hasVideo: !!recordedBlob,
+      canUpload: !btnUpload.disabled,
+      queueCount: uploadQueue.filter(function (j) { return j.status === 'queued' || j.status === 'uploading'; }).length,
+      ts: Date.now()
+    };
+    postJson_(GAS_URL, { action: 'statusSend', accessCode: ACCESS_CODE, pairCode: pairCode, status: status }, 0, 0)
+      .catch(function () { /* gửi trạng thái lỗi tạm thời không sao, lượt sau gửi lại */ });
   }
 
 })();
