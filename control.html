@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Điều Khiển Từ Xa - Quay Video Xác Nhận Đơn Hàng</title>
-<link rel="stylesheet" href="styles.css?v=20260912b" />
+<link rel="stylesheet" href="styles.css?v=20260912c" />
 <style>
   .connect-row { display: flex; gap: 8px; }
   .connect-row input {
@@ -61,6 +61,29 @@
     <p id="connectMsg" class="muted"></p>
   </section>
 
+  <section class="card hidden" id="orderCard">
+    <h2>Thông tin đơn hàng</h2>
+    <label for="ctlOrderCode">Mã đơn hàng</label>
+    <input id="ctlOrderCode" type="text" placeholder="Nhập hoặc bắn mã (máy quét mã vạch rời)" autocomplete="off" autocapitalize="characters" />
+
+    <label for="ctlCallerName">Người gọi</label>
+    <select id="ctlCallerName">
+      <option value="">-- Chọn người gọi --</option>
+    </select>
+
+    <label for="ctlCallDate">Ngày gọi</label>
+    <input id="ctlCallDate" type="date" />
+
+    <label for="ctlReason">Lý do / Kết quả cuộc gọi</label>
+    <select id="ctlReason">
+      <option value="">-- Chọn lý do --</option>
+    </select>
+    <input id="ctlReasonOther" type="text" placeholder="Nhập lý do khác..." class="hidden" />
+
+    <label for="ctlNote">Ghi chú thêm (không bắt buộc)</label>
+    <textarea id="ctlNote" rows="2" placeholder="Ghi chú..."></textarea>
+  </section>
+
   <section class="card hidden" id="controlCard">
     <h2>Trạng thái điện thoại — Đơn: <span id="curOrderCode">—</span></h2>
     <div class="status-grid">
@@ -84,7 +107,7 @@
 
 </main>
 
-<script src="config.js?v=20260912b"></script>
+<script src="config.js?v=20260912c"></script>
 <script>
 (function () {
   'use strict';
@@ -97,6 +120,7 @@
 
   var connPill = $('connPill');
   var connectCard = $('connectCard');
+  var orderCard = $('orderCard');
   var controlCard = $('controlCard');
   var pairCodeInput = $('pairCodeInput');
   var btnConnect = $('btnConnect');
@@ -109,6 +133,16 @@
   var stQueue = $('stQueue');
   var lastUpdated = $('lastUpdated');
 
+  // ---- Form nhập thông tin đơn hàng ngay trên máy tính (điện thoại chỉ
+  // làm camera, không ai gõ trên điện thoại nữa) ----
+  var ctlOrderCode = $('ctlOrderCode');
+  var ctlCallerName = $('ctlCallerName');
+  var ctlCallDate = $('ctlCallDate');
+  var ctlReason = $('ctlReason');
+  var ctlReasonOther = $('ctlReasonOther');
+  var ctlNote = $('ctlNote');
+  var cbUpload = $('cbUpload');
+
   var pairCode = '';
   var statusPollTimer = null;
   var lastStatus = null;
@@ -119,15 +153,130 @@
     if (e.key === 'Enter') connect_();
   });
 
+  ctlOrderCode.addEventListener('input', function () {
+    var pos = ctlOrderCode.selectionStart;
+    ctlOrderCode.value = ctlOrderCode.value.toUpperCase();
+    ctlOrderCode.setSelectionRange(pos, pos);
+    updateUploadEnabled_();
+  });
+  ctlReason.addEventListener('change', function () {
+    if (ctlReason.value === '__OTHER__') {
+      ctlReasonOther.classList.remove('hidden');
+    } else {
+      ctlReasonOther.classList.add('hidden');
+      ctlReasonOther.value = '';
+    }
+    updateUploadEnabled_();
+  });
+  [ctlCallerName, ctlCallDate, ctlReasonOther].forEach(function (el) {
+    el.addEventListener('change', updateUploadEnabled_);
+    el.addEventListener('input', updateUploadEnabled_);
+  });
+
+  ctlCallDate.value = todayStr_();
+  loadOrderConfig_();
+
   $('cbOpenCamera').addEventListener('click', function () { sendCommand_('openCamera'); });
   $('cbCloseCamera').addEventListener('click', function () { sendCommand_('closeCamera'); });
   $('cbStartRec').addEventListener('click', function () { sendCommand_('startRecording'); });
   $('cbStopRec').addEventListener('click', function () { sendCommand_('stopRecording'); });
   $('cbRetake').addEventListener('click', function () { sendCommand_('retake'); });
   $('cbSkip').addEventListener('click', function () {
-    if (confirm('Bỏ qua đơn này (không upload video)?')) sendCommand_('skip');
+    if (!confirm('Bỏ qua đơn này (không upload video)?')) return;
+    sendCommand_('skip', collectOrderData_());
+    resetOrderFields_();
   });
-  $('cbUpload').addEventListener('click', function () { sendCommand_('upload'); });
+  cbUpload.addEventListener('click', function () {
+    if (cbUpload.disabled) return;
+    sendCommand_('upload', collectOrderData_());
+    resetOrderFields_();
+  });
+
+  // ---- Nạp danh sách Người gọi / Lý do từ máy chủ (dùng chung API với app
+  // trên điện thoại), để chọn được y hệt như trên điện thoại ----
+  function loadOrderConfig_() {
+    if (!GAS_URL || GAS_URL.indexOf('DÁN_URL') !== -1) return;
+    fetch(GAS_URL + '?action=config')
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (!data.ok) throw new Error(data.error || 'Lỗi không xác định');
+        fillSelect_(ctlCallerName, data.callers, '-- Chọn người gọi --');
+        fillSelect_(ctlReason, data.reasons, '-- Chọn lý do --', true);
+      })
+      .catch(function () { /* dùng danh sách rỗng, nhân viên vẫn gõ tay lý do khác được */ });
+  }
+
+  function fillSelect_(selectEl, items, placeholder, addOtherOption) {
+    selectEl.innerHTML = '';
+    var ph = document.createElement('option');
+    ph.value = '';
+    ph.textContent = placeholder;
+    selectEl.appendChild(ph);
+    (items || []).forEach(function (item) {
+      var opt = document.createElement('option');
+      opt.value = item;
+      opt.textContent = item;
+      selectEl.appendChild(opt);
+    });
+    if (addOtherOption) {
+      var other = document.createElement('option');
+      other.value = '__OTHER__';
+      other.textContent = 'Khác (nhập tay)';
+      selectEl.appendChild(other);
+    }
+  }
+
+  function getCtlReasonValue_() {
+    if (ctlReason.value === '__OTHER__') return ctlReasonOther.value.trim();
+    return ctlReason.value;
+  }
+
+  function collectOrderData_() {
+    return {
+      orderCode: ctlOrderCode.value.trim().toUpperCase(),
+      callerName: ctlCallerName.value,
+      callDate: ctlCallDate.value,
+      reason: getCtlReasonValue_(),
+      staffNote: ctlNote.value.trim()
+    };
+  }
+
+  // Về trạng thái sẵn sàng cho đơn kế tiếp — giống hệt cách điện thoại tự
+  // reset form của nó: xoá mã đơn/lý do/ghi chú, GIỮ NGUYÊN người gọi + ngày
+  // gọi (vì thường gọi nhiều đơn liên tiếp trong cùng 1 ca/1 ngày).
+  function resetOrderFields_() {
+    ctlOrderCode.value = '';
+    ctlReason.value = '';
+    ctlReasonOther.classList.add('hidden');
+    ctlReasonOther.value = '';
+    ctlNote.value = '';
+    updateUploadEnabled_();
+  }
+
+  // Nút "Tải lên hàng đợi" chỉ bật khi: điện thoại báo đã có video quay xong
+  // (status.hasVideo), KHÔNG đang quay dở, VÀ đã điền đủ thông tin đơn hàng
+  // trên máy tính. Tính riêng ở đây (không dùng status.canUpload từ điện
+  // thoại) vì điện thoại không còn giữ form dữ liệu nữa — mọi thứ nhập trên
+  // máy tính này.
+  function updateUploadEnabled_() {
+    var hasVideo = !!(lastStatus && lastStatus.hasVideo);
+    var recording = !!(lastStatus && lastStatus.recording);
+    var formOk = ctlOrderCode.value.trim() !== '' &&
+      ctlCallerName.value !== '' &&
+      ctlCallDate.value !== '' &&
+      getCtlReasonValue_() !== '';
+    cbUpload.disabled = !(hasVideo && formOk && !recording);
+  }
+
+  function todayStr_() {
+    try {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Saigon', year: 'numeric', month: '2-digit', day: '2-digit'
+      }).format(new Date());
+    } catch (e) {
+      return new Date().toISOString().slice(0, 10);
+    }
+  }
 
   function connect_() {
     var code = (pairCodeInput.value || '').trim();
@@ -177,6 +326,7 @@
   function setConnected_(ok) {
     connPill.className = 'pill ' + (ok ? 'pill-ok' : 'pill-error');
     connPill.textContent = ok ? ('Đã kết nối (' + pairCode + ')') : 'Mất kết nối';
+    orderCard.classList.toggle('hidden', !ok);
     controlCard.classList.toggle('hidden', !ok);
   }
 
@@ -193,7 +343,7 @@
     $('cbStartRec').disabled = !status.cameraOpen || !!status.recording;
     $('cbStopRec').disabled = !status.recording;
     $('cbRetake').disabled = !status.hasVideo || !!status.recording;
-    $('cbUpload').disabled = !status.canUpload || !!status.recording;
+    updateUploadEnabled_(); // dùng status.hasVideo/recording (lastStatus vừa cập nhật) + dữ liệu form trên máy tính
 
     if (status.ts) {
       lastUpdated.textContent = 'Cập nhật lúc ' + new Date(status.ts).toLocaleTimeString('vi-VN');
@@ -205,9 +355,14 @@
     el.className = 'v ' + (val ? 'on' : 'off');
   }
 
-  function sendCommand_(cmd) {
+  // data (tuỳ chọn): thông tin đơn hàng đi kèm lệnh 'skip'/'upload', gộp
+  // vào cùng 1 request với lệnh — điện thoại nhận được cả lệnh lẫn dữ liệu
+  // trong 1 lượt poll, không cần đồng bộ 2 chiều liên tục.
+  function sendCommand_(cmd, data) {
     if (!pairCode) return;
-    postJson_(GAS_URL, { action: 'controlSend', accessCode: ACCESS_CODE, pairCode: pairCode, command: cmd }, 1, 500)
+    var body = { action: 'controlSend', accessCode: ACCESS_CODE, pairCode: pairCode, command: cmd };
+    if (data) body.data = data;
+    postJson_(GAS_URL, body, 1, 500)
       .catch(function () { /* lỗi mạng tạm thời, nhân viên có thể bấm lại */ });
   }
 
