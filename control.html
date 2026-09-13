@@ -39,6 +39,41 @@
   .ctrl-grid .btn { padding: 16px 10px; font-size: 15px; }
   .ctrl-grid .full { grid-column: 1 / -1; }
   .last-updated { font-size: 12px; color: var(--muted); margin-top: 10px; text-align: right; }
+  .live-preview-wrap video#liveVideoEl {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    z-index: 3;
+    background: #000;
+  }
+  .live-badge {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background: rgba(0, 0, 0, 0.6);
+    color: #ff6961;
+    padding: 4px 10px;
+    border-radius: var(--radius-pill);
+    font-size: 12px;
+    font-weight: 700;
+    z-index: 5;
+  }
+  .btn-mute-toggle {
+    position: absolute;
+    bottom: 10px;
+    right: 10px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-pill);
+    width: 34px;
+    height: 34px;
+    font-size: 16px;
+    cursor: pointer;
+    z-index: 5;
+  }
 </style>
 </head>
 <body>
@@ -87,8 +122,11 @@
     <h2>Trạng thái điện thoại — Đơn: <span id="curOrderCode">—</span></h2>
 
     <div class="live-preview-wrap" id="livePreviewWrap">
+      <video id="liveVideoEl" autoplay playsinline muted class="hidden"></video>
       <img id="livePreviewImg" class="hidden" alt="Xem trực tiếp từ điện thoại" />
       <div id="livePreviewPlaceholder" class="live-preview-placeholder">📷 Camera đang tắt</div>
+      <div id="liveBadge" class="live-badge hidden">🔴 Trực tiếp</div>
+      <button id="btnMuteToggle" class="btn-mute-toggle hidden" type="button" title="Bật/tắt tiếng">🔇</button>
     </div>
     <p id="remoteErrorMsg" class="remote-error hidden"></p>
 
@@ -153,6 +191,23 @@
   var statusPollTimer = null;
   var lastStatus = null;
   var missedPolls = 0;
+
+  // ---- Video trực tiếp thật (WebRTC) — xem app.js: điện thoại chủ động
+  // gửi "offer", trang này nhận + trả lời "answer" qua GAS (chỉ trao đổi
+  // thông tin kết nối lúc đầu), sau đó video/âm thanh chạy trực tiếp
+  // điện thoại -> máy này qua cùng mạng wifi, không qua GAS nữa nên mượt.
+  var pc_ = null;
+  var webrtcLastOfferSid_ = '';
+  var webrtcOfferPollTimer_ = null;
+  var webrtcConnected_ = false;
+  var liveVideoEl = $('liveVideoEl');
+  var liveBadge = $('liveBadge');
+  var btnMuteToggle = $('btnMuteToggle');
+
+  btnMuteToggle.addEventListener('click', function () {
+    liveVideoEl.muted = !liveVideoEl.muted;
+    btnMuteToggle.textContent = liveVideoEl.muted ? '🔇' : '🔊';
+  });
 
   btnConnect.addEventListener('click', connect_);
   pairCodeInput.addEventListener('keydown', function (e) {
@@ -300,6 +355,8 @@
     pollStatus_(true);
     clearInterval(statusPollTimer);
     statusPollTimer = setInterval(function () { pollStatus_(false); }, 1500);
+    clearInterval(webrtcOfferPollTimer_);
+    webrtcOfferPollTimer_ = setInterval(pollWebrtcOffer_, 1500);
   }
 
   function pollStatus_(isFirstCheck) {
@@ -334,6 +391,7 @@
     connPill.textContent = ok ? ('Đã kết nối (' + pairCode + ')') : 'Mất kết nối';
     orderCard.classList.toggle('hidden', !ok);
     controlCard.classList.toggle('hidden', !ok);
+    if (!ok) teardownWebrtc_();
   }
 
   function renderStatus_(status) {
@@ -371,6 +429,7 @@
   // nhưng đủ để biết ngay điện thoại đang quay đúng góc/đúng đơn không, mà
   // không cần đứng cạnh điện thoại hay dùng dịch vụ realtime trả phí nào.
   function renderLivePreview_(status) {
+    if (webrtcConnected_) return; // đang có video WebRTC thật chạy rồi, khỏi cần ảnh chụp dự phòng đè lên
     var img = $('livePreviewImg');
     var placeholder = $('livePreviewPlaceholder');
     if (status.cameraOpen && status.preview) {
@@ -382,6 +441,101 @@
       placeholder.classList.remove('hidden');
       placeholder.textContent = status.cameraOpen ? '📷 Đang chờ hình...' : '📷 Camera đang tắt';
     }
+  }
+
+  // Điện thoại poll ~1.5s để gửi "offer" mới mỗi khi mở camera; trang này
+  // cũng poll cùng nhịp để nhận offer, so sánh "sid" (mã phiên) để biết đây
+  // là offer MỚI chưa xử lý (tránh áp lại y hệt offer cũ mỗi lượt poll).
+  function pollWebrtcOffer_() {
+    if (!pairCode) return;
+    postJson_(GAS_URL, { action: 'webrtcPoll', accessCode: ACCESS_CODE, pairCode: pairCode, role: 'offer' }, 0, 0)
+      .then(function (res) {
+        if (!res || !res.ok || !res.signal) return;
+        if (res.signal.sid === webrtcLastOfferSid_) return; // offer cũ đã xử lý rồi
+        handleWebrtcOffer_(res.signal.sid, res.signal.sdp);
+      })
+      .catch(function () { /* thử lại lượt sau */ });
+  }
+
+  function handleWebrtcOffer_(sid, sdp) {
+    webrtcLastOfferSid_ = sid;
+    teardownWebrtc_(true); // giữ webrtcLastOfferSid_, chỉ dọn kết nối WebRTC cũ (nếu có)
+    try {
+      pc_ = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    } catch (e) {
+      return; // trình duyệt không hỗ trợ WebRTC -> im lặng bỏ qua, vẫn còn ảnh chụp dự phòng
+    }
+    pc_.ontrack = function (ev) {
+      liveVideoEl.srcObject = ev.streams[0];
+      liveVideoEl.classList.remove('hidden');
+      $('livePreviewImg').classList.add('hidden');
+      $('livePreviewPlaceholder').classList.add('hidden');
+      liveBadge.classList.remove('hidden');
+      btnMuteToggle.classList.remove('hidden');
+      webrtcConnected_ = true;
+      liveVideoEl.play().catch(function () { /* trình duyệt chặn autoplay -> nhân viên bấm vào video để phát */ });
+    };
+    pc_.oniceconnectionstatechange = function () {
+      if (!pc_) return;
+      var st = pc_.iceConnectionState;
+      if (st === 'failed' || st === 'disconnected' || st === 'closed') {
+        // Không đóng hẳn pc_ ở đây để khỏi giẫm lệnh lúc đang tự hồi phục —
+        // điện thoại tự tạo offer MỚI sau khi rớt kết nối (xem app.js), lượt
+        // poll kế tiếp ở đây sẽ nhận offer đó (sid khác) và kết nối lại.
+        webrtcConnected_ = false;
+        liveVideoEl.classList.add('hidden');
+        liveBadge.classList.add('hidden');
+        btnMuteToggle.classList.add('hidden');
+      }
+    };
+    pc_.setRemoteDescription({ type: 'offer', sdp: sdp })
+      .then(function () { return pc_.createAnswer(); })
+      .then(function (answer) { return pc_.setLocalDescription(answer); })
+      .then(function () { return waitIceGatheringComplete_(pc_, 2500); })
+      .then(function () {
+        if (!pc_) return;
+        return postJson_(GAS_URL, {
+          action: 'webrtcSend', accessCode: ACCESS_CODE, pairCode: pairCode,
+          role: 'answer', sid: sid, sdp: pc_.localDescription.sdp
+        }, 0, 0);
+      })
+      .catch(function () { /* điện thoại sẽ tự gửi offer mới ở lượt sau, thử lại lúc đó */ });
+  }
+
+  // giữGiuSid: true khi chỉ đang dọn kết nối WebRTC cũ để mở kết nối mới
+  // ngay sau đó (không reset webrtcLastOfferSid_ vì đang set nó ngay trước
+  // khi gọi hàm này); false khi thật sự ngắt kết nối máy tính<->điện thoại
+  // (bấm lại "Kết nối" hoặc mất kết nối) — lúc đó cần quên offer cũ đi để
+  // nếu điện thoại gửi lại y hệt sid cũ (hiếm khi xảy ra) vẫn được xử lý lại.
+  function teardownWebrtc_(giuSid) {
+    if (!giuSid) webrtcLastOfferSid_ = '';
+    webrtcConnected_ = false;
+    liveVideoEl.classList.add('hidden');
+    liveVideoEl.srcObject = null;
+    liveBadge.classList.add('hidden');
+    btnMuteToggle.classList.add('hidden');
+    if (pc_) {
+      try { pc_.close(); } catch (e) {}
+      pc_ = null;
+    }
+  }
+
+  function waitIceGatheringComplete_(pc, timeoutMs) {
+    if (pc.iceGatheringState === 'complete') return Promise.resolve();
+    return new Promise(function (resolve) {
+      var done = false;
+      function finish() {
+        if (done) return;
+        done = true;
+        pc.removeEventListener('icegatheringstatechange', check);
+        resolve();
+      }
+      function check() {
+        if (pc.iceGatheringState === 'complete') finish();
+      }
+      pc.addEventListener('icegatheringstatechange', check);
+      setTimeout(finish, timeoutMs);
+    });
   }
 
   function setBool_(el, val, onText, offText) {
