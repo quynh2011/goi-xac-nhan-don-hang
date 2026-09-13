@@ -71,6 +71,8 @@
   var recordedMimeType = '';
   var recTimerInterval = null;
   var recSeconds = 0;
+  var recStartTs = 0; // mốc thời gian (Date.now()) lúc BẮT ĐẦU quay — gửi kèm status để máy tính tự hiển thị đồng hồ đang quay, không cần đợi mỗi giây 1 lượt cập nhật riêng.
+  var lastQueuePush_ = 0; // chặn spam statusSend khi tiến độ upload (%) đổi liên tục
   var html5QrCode = null;
   var lastValidationMissing_ = [];
   var lastRemoteError_ = '';
@@ -496,6 +498,7 @@
     mediaRecorder.start(1000);
 
     recSeconds = 0;
+    recStartTs = Date.now();
     recTimer.textContent = '00:00';
     recDot.classList.remove('hidden');
     recTimerInterval = setInterval(function () {
@@ -695,6 +698,7 @@
     };
     uploadQueue.push(job);
     renderQueue_();
+    pushRemoteStatus_(); // báo ngay cho máy tính thấy video vừa vào hàng đợi
     processQueue_();
 
     // Trả form về trạng thái sẵn sàng cho cuộc gọi kế tiếp NGAY, không chờ
@@ -716,10 +720,12 @@
     job.status = 'uploading';
     job.progress = 0;
     renderQueue_();
+    pushRemoteStatus_();
 
     uploadViaGasRelay_(job.blob, job.fileName, job.mimeType, function (pct) {
       job.progress = pct;
       renderQueue_();
+      maybePushQueueProgress_();
     })
       .then(function (driveFile) {
         if (!driveFile || !driveFile.id) {
@@ -753,8 +759,18 @@
       .then(function () {
         queueProcessing = false;
         renderQueue_();
+        pushRemoteStatus_(); // báo ngay kết quả tải lên (thành công/lỗi) cho máy tính
         processQueue_(); // xử lý video kế tiếp trong hàng đợi (nếu có)
       });
+  }
+
+  // Chặn spam statusSend khi tiến độ upload (%) đổi liên tục nhiều lần/giây —
+  // chỉ gửi tối đa 1 lượt mỗi ~500ms, đủ mượt để xem % chạy trên máy tính.
+  function maybePushQueueProgress_() {
+    var now = Date.now();
+    if (now - lastQueuePush_ < 500) return;
+    lastQueuePush_ = now;
+    pushRemoteStatus_();
   }
 
   function retryJob_(jobId) {
@@ -763,6 +779,7 @@
     job.status = 'queued';
     job.errorMsg = '';
     renderQueue_();
+    pushRemoteStatus_();
     processQueue_();
   }
 
@@ -968,8 +985,11 @@
       btnTogglePair.textContent = '🔴 Tắt điều khiển từ xa';
       pairStatus.textContent = 'Đang bật — nhập mã ' + pairCode + ' vào control.html trên máy tính để kết nối.';
       pushRemoteStatus_();
-      controlPollTimer = setInterval(pollRemoteCommand_, 1500);
-      statusPushTimer = setInterval(pushRemoteStatus_, 2000);
+      // Rút ngắn nhịp thăm dò/gửi trạng thái (trước đây 1500ms/2000ms) để nút
+      // bấm trên máy tính phản hồi gần như ngay lập tức, không còn độ trễ
+      // rõ rệt như trước (yêu cầu nhân viên: bấm phải nhanh như trên điện thoại).
+      controlPollTimer = setInterval(pollRemoteCommand_, 700);
+      statusPushTimer = setInterval(pushRemoteStatus_, 1000);
       if (mediaStream) maybeStartWebrtcOffer_(); // trường hợp camera đã mở sẵn trước khi bật điều khiển từ xa
     } else {
       btnTogglePair.textContent = '📡 Bật điều khiển từ xa';
@@ -1075,9 +1095,16 @@
       orderCode: orderCodeEl.value.trim(),
       cameraOpen: !!mediaStream,
       recording: !!(mediaRecorder && mediaRecorder.state === 'recording'),
+      recStartTs: (mediaRecorder && mediaRecorder.state === 'recording') ? recStartTs : 0,
       hasVideo: !!recordedBlob,
       canUpload: !btnUpload.disabled,
       queueCount: uploadQueue.filter(function (j) { return j.status === 'queued' || j.status === 'uploading'; }).length,
+      // Chi tiết hàng đợi tải lên (mục 5: hiện được KẾT QUẢ tải lên hàng đợi
+      // ngay trên máy tính, không chỉ mỗi con số) — cắt ngắn errorMsg để
+      // tránh vượt giới hạn dung lượng 1 giá trị cache (~100KB).
+      queue: uploadQueue.map(function (j) {
+        return { id: j.id, orderCode: j.orderCode, status: j.status, progress: j.progress, errorMsg: (j.errorMsg || '').slice(0, 150) };
+      }),
       lastError: lastRemoteError_ || '',
       preview: mediaStream ? captureLivePreviewFrame_() : '',
       ts: Date.now()
