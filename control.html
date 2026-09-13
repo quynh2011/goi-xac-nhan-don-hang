@@ -6,13 +6,29 @@
 <title>Điều Khiển Từ Xa - Quay Video Xác Nhận Đơn Hàng</title>
 <link rel="stylesheet" href="styles.css?v=20260912c" />
 <style>
-  .connect-row { display: flex; gap: 8px; }
+  /* Trang này dùng chủ yếu trên máy tính -> nới rộng khung chứa (mặc định
+     480px trong styles.css dùng chung là để vừa điện thoại) và chia 2 cột:
+     trái = trạng thái/nút bấm, phải = màn hình xem trực tiếp, để không phải
+     kéo dài trang xuống mới thấy hết mọi thứ. */
+  body .container { max-width: 1040px; }
+  .connect-row { display: flex; gap: 8px; margin-top: 10px; }
   .connect-row input {
     flex: 1;
     font-size: 22px;
     letter-spacing: 4px;
     text-align: center;
     font-weight: 700;
+  }
+  .control-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+    gap: 18px;
+    align-items: start;
+  }
+  .control-col-right .live-preview-wrap { margin-bottom: 10px; }
+  @media (max-width: 760px) {
+    .control-layout { grid-template-columns: 1fr; }
+    .control-col-right { order: -1; } /* trên màn hẹp: vẫn ưu tiên hiện video lên trên cùng */
   }
   .status-grid {
     display: grid;
@@ -39,6 +55,24 @@
   .ctrl-grid .btn { padding: 16px 10px; font-size: 15px; }
   .ctrl-grid .full { grid-column: 1 / -1; }
   .last-updated { font-size: 12px; color: var(--muted); margin-top: 10px; text-align: right; }
+  /* Hàng đợi tải lên hiển thị trên máy tính (mục 5) — cùng kiểu status-box */
+  .ctl-queue-wrap { margin-top: 14px; }
+  .ctl-queue-wrap .k { color: var(--muted); display: block; margin-bottom: 6px; font-size: 12px; }
+  .ctl-queue-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    font-size: 13px;
+  }
+  .ctl-queue-item .oc { font-weight: 700; flex: 0 0 auto; }
+  .ctl-queue-item .st { color: var(--muted); flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ctl-queue-item.st-success .st { color: var(--success); }
+  .ctl-queue-item.st-error .st { color: #c62a20; }
   .live-preview-wrap video#liveVideoEl {
     position: absolute;
     inset: 0;
@@ -87,8 +121,9 @@
 
   <section class="card" id="connectCard">
     <h2>Kết nối tới điện thoại</h2>
-    <p class="muted">Mở app quay video trên điện thoại đặt cố định làm camera, bấm "Bật điều khiển từ xa", rồi nhập mã 6 số hiển thị trên đó vào đây.</p>
-    <div class="connect-row">
+    <p class="muted" id="connectHint">Mở app quay video trên điện thoại đặt cố định làm camera, bấm "Bật điều khiển từ xa", rồi nhập mã 6 số hiển thị trên đó vào đây.</p>
+    <button id="btnConnectToggle" class="btn btn-secondary" type="button">🔌 Kết nối tới điện thoại</button>
+    <div class="connect-row hidden" id="connectExpandWrap">
       <input id="pairCodeInput" type="text" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="off" />
       <button id="btnConnect" class="btn btn-primary" type="button">Kết nối</button>
     </div>
@@ -121,32 +156,45 @@
   <section class="card hidden" id="controlCard">
     <h2>Trạng thái điện thoại — Đơn: <span id="curOrderCode">—</span></h2>
 
-    <div class="live-preview-wrap" id="livePreviewWrap">
-      <video id="liveVideoEl" autoplay playsinline muted class="hidden"></video>
-      <img id="livePreviewImg" class="hidden" alt="Xem trực tiếp từ điện thoại" />
-      <div id="livePreviewPlaceholder" class="live-preview-placeholder">📷 Camera đang tắt</div>
-      <div id="liveBadge" class="live-badge hidden">🔴 Trực tiếp</div>
-      <button id="btnMuteToggle" class="btn-mute-toggle hidden" type="button" title="Bật/tắt tiếng">🔇</button>
-    </div>
-    <p id="remoteErrorMsg" class="remote-error hidden"></p>
+    <div class="control-layout">
+      <div class="control-col-left">
+        <div class="status-grid">
+          <div class="status-box"><span class="k">Camera</span><span id="stCamera" class="v off">Đang tắt</span></div>
+          <div class="status-box"><span class="k">Đang quay</span><span id="stRecording" class="v off">Không</span></div>
+          <div class="status-box"><span class="k">Thời gian quay</span><span id="stRecTime" class="v off">00:00</span></div>
+          <div class="status-box"><span class="k">Có video</span><span id="stVideo" class="v off">Chưa</span></div>
+          <div class="status-box"><span class="k">Hàng đợi tải lên</span><span id="stQueue" class="v off">0</span></div>
+        </div>
 
-    <div class="status-grid">
-      <div class="status-box"><span class="k">Camera</span><span id="stCamera" class="v off">Đang tắt</span></div>
-      <div class="status-box"><span class="k">Đang quay</span><span id="stRecording" class="v off">Không</span></div>
-      <div class="status-box"><span class="k">Có video</span><span id="stVideo" class="v off">Chưa</span></div>
-      <div class="status-box"><span class="k">Hàng đợi tải lên</span><span id="stQueue" class="v off">0</span></div>
-    </div>
+        <div class="ctrl-grid">
+          <button id="cbOpenCamera" class="btn btn-secondary" type="button">🎥 Mở camera</button>
+          <button id="cbCloseCamera" class="btn btn-secondary" type="button">🚫 Tắt camera</button>
+          <button id="cbStartRec" class="btn btn-primary" type="button">⏺ Bắt đầu quay</button>
+          <button id="cbStopRec" class="btn btn-danger" type="button">⏹ Dừng quay</button>
+          <button id="cbRetake" class="btn btn-secondary" type="button">↺ Quay lại</button>
+          <button id="cbSkip" class="btn btn-secondary" type="button">⏭ Bỏ qua</button>
+          <button id="cbUpload" class="btn btn-primary full" type="button">⬆️ Tải lên hàng đợi</button>
+        </div>
 
-    <div class="ctrl-grid">
-      <button id="cbOpenCamera" class="btn btn-secondary" type="button">🎥 Mở camera</button>
-      <button id="cbCloseCamera" class="btn btn-secondary" type="button">🚫 Tắt camera</button>
-      <button id="cbStartRec" class="btn btn-primary" type="button">⏺ Bắt đầu quay</button>
-      <button id="cbStopRec" class="btn btn-danger" type="button">⏹ Dừng quay</button>
-      <button id="cbRetake" class="btn btn-secondary" type="button">↺ Quay lại</button>
-      <button id="cbSkip" class="btn btn-secondary" type="button">⏭ Bỏ qua</button>
-      <button id="cbUpload" class="btn btn-primary full" type="button">⬆️ Tải lên hàng đợi</button>
+        <div class="ctl-queue-wrap hidden" id="ctlQueueWrap">
+          <span class="k">Kết quả tải lên hàng đợi</span>
+          <div id="ctlQueueList"></div>
+        </div>
+
+        <p class="last-updated" id="lastUpdated"></p>
+      </div>
+
+      <div class="control-col-right">
+        <div class="live-preview-wrap" id="livePreviewWrap">
+          <video id="liveVideoEl" autoplay playsinline muted class="hidden"></video>
+          <img id="livePreviewImg" class="hidden" alt="Xem trực tiếp từ điện thoại" />
+          <div id="livePreviewPlaceholder" class="live-preview-placeholder">📷 Camera đang tắt</div>
+          <div id="liveBadge" class="live-badge hidden">🔴 Trực tiếp</div>
+          <button id="btnMuteToggle" class="btn-mute-toggle hidden" type="button" title="Bật/tắt tiếng">🔇</button>
+        </div>
+        <p id="remoteErrorMsg" class="remote-error hidden"></p>
+      </div>
     </div>
-    <p class="last-updated" id="lastUpdated"></p>
   </section>
 
 </main>
@@ -169,13 +217,22 @@
   var pairCodeInput = $('pairCodeInput');
   var btnConnect = $('btnConnect');
   var connectMsg = $('connectMsg');
+  var btnConnectToggle = $('btnConnectToggle');
+  var connectExpandWrap = $('connectExpandWrap');
+  var connectHint = $('connectHint');
 
   var curOrderCode = $('curOrderCode');
   var stCamera = $('stCamera');
   var stRecording = $('stRecording');
+  var stRecTime = $('stRecTime');
   var stVideo = $('stVideo');
   var stQueue = $('stQueue');
+  var ctlQueueWrap = $('ctlQueueWrap');
+  var ctlQueueList = $('ctlQueueList');
   var lastUpdated = $('lastUpdated');
+  var recTimerInterval_ = null;
+  var recBaseElapsedSec_ = 0;
+  var recBaseAtMs_ = 0;
 
   // ---- Form nhập thông tin đơn hàng ngay trên máy tính (điện thoại chỉ
   // làm camera, không ai gõ trên điện thoại nữa) ----
@@ -212,6 +269,14 @@
   btnConnect.addEventListener('click', connect_);
   pairCodeInput.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') connect_();
+  });
+
+  // Mục 4: gọn giao diện — mặc định chỉ hiện nút "Kết nối", bấm vào mới "xổ
+  // ra" khung nhập mã, thay vì luôn hiện sẵn khung nhập chiếm chỗ.
+  btnConnectToggle.addEventListener('click', function () {
+    var opening = connectExpandWrap.classList.contains('hidden');
+    connectExpandWrap.classList.toggle('hidden', !opening);
+    if (opening) pairCodeInput.focus();
   });
 
   ctlOrderCode.addEventListener('input', function () {
@@ -354,7 +419,9 @@
     missedPolls = 0;
     pollStatus_(true);
     clearInterval(statusPollTimer);
-    statusPollTimer = setInterval(function () { pollStatus_(false); }, 1500);
+    // Rút ngắn nhịp thăm dò trạng thái (trước đây 1500ms) để nút bấm/đồng hồ
+    // quay trên máy tính cập nhật gần như ngay lập tức.
+    statusPollTimer = setInterval(function () { pollStatus_(false); }, 700);
     clearInterval(webrtcOfferPollTimer_);
     webrtcOfferPollTimer_ = setInterval(pollWebrtcOffer_, 1500);
   }
@@ -391,7 +458,19 @@
     connPill.textContent = ok ? ('Đã kết nối (' + pairCode + ')') : 'Mất kết nối';
     orderCard.classList.toggle('hidden', !ok);
     controlCard.classList.toggle('hidden', !ok);
-    if (!ok) teardownWebrtc_();
+    if (ok) {
+      // Đã kết nối xong -> gọn khung "Kết nối" lại, khỏi choán chỗ trên
+      // giao diện nữa (mục 4).
+      connectExpandWrap.classList.add('hidden');
+      connectHint.classList.add('hidden');
+      btnConnectToggle.textContent = '🔌 Đổi mã kết nối (đang nối: ' + pairCode + ')';
+    } else {
+      teardownWebrtc_();
+      stopRecTimer_();
+      connectExpandWrap.classList.remove('hidden');
+      connectHint.classList.remove('hidden');
+      btnConnectToggle.textContent = '🔌 Kết nối tới điện thoại';
+    }
   }
 
   function renderStatus_(status) {
@@ -401,6 +480,14 @@
     setBool_(stVideo, status.hasVideo, 'Đã có', 'Chưa');
     stQueue.textContent = status.queueCount || 0;
     stQueue.className = 'v ' + (status.queueCount > 0 ? 'on' : 'off');
+
+    if (status.recording && status.recStartTs) {
+      startRecTimer_(Math.max(0, ((status.ts || Date.now()) - status.recStartTs) / 1000));
+    } else {
+      stopRecTimer_();
+    }
+
+    renderCtlQueue_(status.queue);
 
     $('cbOpenCamera').disabled = !!status.cameraOpen || !!status.recording;
     $('cbCloseCamera').disabled = !status.cameraOpen || !!status.recording;
@@ -538,6 +625,68 @@
     });
   }
 
+  // Mục 2: hiển thị thời gian đang quay ngay trên máy tính. status.recStartTs
+  // và status.ts đều là mốc thời gian lấy từ ĐỒNG HỒ CỦA ĐIỆN THOẠI nên hiệu
+  // (status.ts - status.recStartTs) luôn đúng dù đồng hồ máy tính có lệch;
+  // sau đó chạy tiếp cục bộ bằng đồng hồ máy tính (chỉ cộng dồn thêm vài trăm
+  // ms/giây tới lượt poll kế -> không đáng kể) để đếm mượt mỗi giây thay vì
+  // giật cục theo nhịp poll ~0.7-1s.
+  function startRecTimer_(elapsedAtStatusSec) {
+    recBaseElapsedSec_ = elapsedAtStatusSec;
+    recBaseAtMs_ = Date.now();
+    stRecTime.className = 'v on';
+    if (!recTimerInterval_) {
+      recTimerInterval_ = setInterval(tickRecTimer_, 250);
+    }
+    tickRecTimer_();
+  }
+
+  function tickRecTimer_() {
+    var sec = Math.max(0, Math.floor(recBaseElapsedSec_ + (Date.now() - recBaseAtMs_) / 1000));
+    var m = String(Math.floor(sec / 60)).padStart(2, '0');
+    var s = String(sec % 60).padStart(2, '0');
+    stRecTime.textContent = m + ':' + s;
+  }
+
+  function stopRecTimer_() {
+    clearInterval(recTimerInterval_);
+    recTimerInterval_ = null;
+    stRecTime.textContent = '00:00';
+    stRecTime.className = 'v off';
+  }
+
+  // Mục 5: hiện luôn kết quả hàng đợi tải lên (giống danh sách trên điện
+  // thoại) ngay trên máy tính, không chỉ mỗi con số đếm như trước.
+  var CTL_QUEUE_LABEL_ = {
+    queued: '⏳ Đang chờ...',
+    uploading: '⬆️ Đang tải lên...',
+    success: '✅ Đã tải lên xong',
+    error: '❌ Lỗi'
+  };
+
+  function renderCtlQueue_(queue) {
+    if (!queue || queue.length === 0) {
+      ctlQueueWrap.classList.add('hidden');
+      ctlQueueList.innerHTML = '';
+      return;
+    }
+    ctlQueueWrap.classList.remove('hidden');
+    ctlQueueList.innerHTML = queue.map(function (j) {
+      var label = CTL_QUEUE_LABEL_[j.status] || j.status;
+      if (j.status === 'uploading') label += ' ' + (j.progress || 0) + '%';
+      if (j.status === 'error' && j.errorMsg) label += ': ' + escapeHtmlCtl_(j.errorMsg);
+      return '<div class="ctl-queue-item st-' + escapeHtmlCtl_(j.status) + '">' +
+        '<span class="oc">' + escapeHtmlCtl_(j.orderCode || '') + '</span>' +
+        '<span class="st">' + label + '</span></div>';
+    }).join('');
+  }
+
+  function escapeHtmlCtl_(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
   function setBool_(el, val, onText, offText) {
     el.textContent = val ? onText : offText;
     el.className = 'v ' + (val ? 'on' : 'off');
@@ -548,10 +697,38 @@
   // trong 1 lượt poll, không cần đồng bộ 2 chiều liên tục.
   function sendCommand_(cmd, data) {
     if (!pairCode) return;
+    applyOptimisticStatus_(cmd);
     var body = { action: 'controlSend', accessCode: ACCESS_CODE, pairCode: pairCode, command: cmd };
     if (data) body.data = data;
     postJson_(GAS_URL, body, 1, 500)
       .catch(function () { /* lỗi mạng tạm thời, nhân viên có thể bấm lại */ });
+  }
+
+  // Mục 1: nút bấm phải phản hồi NGAY, không đợi hết vòng gửi lệnh (điện
+  // thoại poll lệnh) + vòng nhận trạng thái thật (máy tính poll status) mới
+  // cập nhật UI — cộng lại có thể mất 1-2s dù đã rút ngắn nhịp poll. Nên khi
+  // vừa bấm, tự vẽ NGAY trạng thái DỰ ĐOÁN (không ghi đè lastStatus thật) để
+  // nút/đồng hồ sáng lên tức thì như bên điện thoại; trạng thái thật từ điện
+  // thoại (chỉ trong vài trăm ms sau) sẽ ghi đè lại đúng ở lượt poll kế tiếp,
+  // tự sửa nếu lệnh vì lý do gì đó không thực hiện được (ví dụ máy vừa mất
+  // quyền camera).
+  function applyOptimisticStatus_(cmd) {
+    if (!lastStatus) return;
+    var now = Date.now();
+    var patch;
+    switch (cmd) {
+      case 'openCamera': patch = { cameraOpen: true }; break;
+      case 'closeCamera': patch = { cameraOpen: false, recording: false, recStartTs: 0 }; break;
+      case 'startRecording': patch = { recording: true, recStartTs: now, ts: now }; break;
+      case 'stopRecording': patch = { recording: false }; break;
+      case 'retake': patch = { hasVideo: false, recording: false }; break;
+      default: return;
+    }
+    var optimistic = {};
+    for (var k in lastStatus) optimistic[k] = lastStatus[k];
+    for (var k2 in patch) optimistic[k2] = patch[k2];
+    if (!optimistic.ts) optimistic.ts = now;
+    renderStatus_(optimistic);
   }
 
   function postJson_(url, body, retriesLeft, baseDelayMs) {
